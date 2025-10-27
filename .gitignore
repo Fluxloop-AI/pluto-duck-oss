@@ -30,3 +30,5 @@ tauri-shell
 build
 
 .dev-data
+
+build-signed.sh

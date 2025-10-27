@@ -7,27 +7,27 @@ Local-first analytics studio powered by DuckDB, dbt, and an AI-assisted query ag
   <img src="docs/screen2.png" alt="Data Sources" width="45%" />
 </p>
 
-## 프로덕트 목적
+## Product Vision
 
-**Pluto Duck**은 개인과 소규모 팀을 위한 **로컬 우선(Local-first) 데이터 분석 환경**입니다. 
-클라우드에 데이터를 업로드하지 않고도 강력한 분석 기능을 제공합니다.
+**Pluto Duck** is a **local-first data analytics environment** for individuals and small teams.
+Get powerful analytics capabilities without uploading your data to the cloud.
 
-### 핵심 가치
+### Core Values
 
-- **🔒 프라이버시 우선**: 모든 데이터와 연산이 로컬 머신에서 실행되며, 외부로 전송되지 않습니다
-- **💬 자연어 질의**: AI 에이전트와 대화하듯 데이터를 질의하고 인사이트를 얻을 수 있습니다
-- **🚀 빠른 데이터 처리**: DuckDB 기반의 고성능 분석 엔진으로 대용량 데이터도 빠르게 처리합니다
-- **🔌 유연한 연결**: CSV, Parquet, PostgreSQL, SQLite 등 다양한 데이터 소스를 간편하게 연결합니다
-- **🛠️ 전문가 친화적**: dbt 통합으로 데이터 변환 로직을 체계적으로 관리할 수 있습니다
+- **🔒 Privacy First**: All data and computation stay on your local machine, never transmitted externally
+- **💬 Natural Language Queries**: Ask questions and get insights by conversing with an AI agent
+- **🚀 High Performance**: DuckDB-powered analytics engine handles large datasets with speed
+- **🔌 Flexible Connectivity**: Easily connect CSV, Parquet, PostgreSQL, SQLite, and more
+- **🛠️ Professional Grade**: Structured data transformation management through dbt integration
 
-## 프로덕트 방향
+## Product Direction
 
-Pluto Duck은 단계별로 진화하며, 다음과 같은 방향으로 발전하고 있습니다:
+Pluto Duck evolves in stages, developing in the following directions:
 
-1. **개인 데이터 IDE**: 개발자와 데이터 분석가가 로컬에서 편안하게 작업할 수 있는 도구
-2. **접근성 확대**: CLI, 웹 인터페이스, 데스크톱 앱 등 다양한 사용 방식 지원
-3. **오픈소스 우선**: 커뮤니티와 함께 성장하며 투명하게 개발
-4. **(미래) 하이브리드 옵션**: 필요에 따라 클라우드 기능을 선택적으로 활용할 수 있는 확장성
+1. **Personal Data IDE**: A comfortable local workspace for developers and data analysts
+2. **Accessibility Expansion**: Multiple interfaces including CLI, web, and desktop applications
+3. **Open Source First**: Transparent development growing with the community
+4. **(Future) Hybrid Options**: Optional cloud capabilities for scalability when needed
 
 ## Project Layout
 
