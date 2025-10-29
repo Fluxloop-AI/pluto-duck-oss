@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { PlusIcon, XIcon, FolderOpenIcon } from 'lucide-react';
+import { PlusIcon, XIcon, History } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { ChatTab } from '../../hooks/useMultiTabChat';
 import type { ChatSessionSummary } from '../../lib/chatApi';
@@ -103,7 +103,7 @@ export function TabBar({
             className="p-1.5 hover:bg-accent rounded-md transition-colors"
             title="Load conversation"
           >
-            <FolderOpenIcon className="h-4 w-4" />
+            <History className="h-4 w-4" />
           </button>
           
           {showSessionPopup && (

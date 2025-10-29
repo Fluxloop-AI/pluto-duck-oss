@@ -121,6 +121,81 @@ DDL_STATEMENTS = [
     """
     CREATE INDEX IF NOT EXISTS idx_tables_target ON data_source_tables(target_table)
     """,
+    # Board tables
+    """
+    CREATE TABLE IF NOT EXISTS boards (
+        id UUID PRIMARY KEY,
+        project_id UUID NOT NULL,
+        name VARCHAR NOT NULL,
+        description VARCHAR,
+        position INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        settings JSON,
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_boards_project ON boards(project_id, position ASC, updated_at DESC)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS board_items (
+        id UUID PRIMARY KEY,
+        board_id UUID NOT NULL,
+        item_type VARCHAR NOT NULL,
+        title VARCHAR,
+        position_x INTEGER DEFAULT 0,
+        position_y INTEGER DEFAULT 0,
+        width INTEGER DEFAULT 1,
+        height INTEGER DEFAULT 1,
+        payload JSON NOT NULL,
+        render_config JSON,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (board_id) REFERENCES boards(id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_items_board ON board_items(board_id, position_y, position_x)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS board_queries (
+        id UUID PRIMARY KEY,
+        board_item_id UUID NOT NULL,
+        query_text VARCHAR NOT NULL,
+        data_source_tables JSON,
+        refresh_mode VARCHAR DEFAULT 'manual',
+        refresh_interval_seconds INTEGER,
+        last_executed_at TIMESTAMP,
+        last_result_snapshot JSON,
+        last_result_rows INTEGER,
+        execution_status VARCHAR DEFAULT 'pending',
+        error_message VARCHAR,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (board_item_id) REFERENCES board_items(id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_queries_item ON board_queries(board_item_id)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS board_item_assets (
+        id UUID PRIMARY KEY,
+        board_item_id UUID NOT NULL,
+        asset_type VARCHAR NOT NULL,
+        file_name VARCHAR NOT NULL,
+        file_path VARCHAR NOT NULL,
+        file_size INTEGER,
+        mime_type VARCHAR,
+        thumbnail_path VARCHAR,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (board_item_id) REFERENCES board_items(id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_assets_item ON board_item_assets(board_item_id)
+    """,
 ]
 
 DEFAULT_SETTINGS: Dict[str, Any] = {

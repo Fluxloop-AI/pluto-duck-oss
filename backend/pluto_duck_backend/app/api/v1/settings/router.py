@@ -34,6 +34,7 @@ class SettingsResponse(BaseModel):
     data_sources: Optional[Any] = None
     dbt_project: Optional[Any] = None
     ui_preferences: Dict[str, Any] = {"theme": "dark"}
+    default_project_id: Optional[str] = None
 
 
 class UpdateSettingsResponse(BaseModel):
@@ -72,6 +73,7 @@ def get_settings() -> SettingsResponse:
         data_sources=settings.get("data_sources"),
         dbt_project=settings.get("dbt_project"),
         ui_preferences=settings.get("ui_preferences") or {"theme": "dark"},
+        default_project_id=repo._default_project_id,
     )
 
 

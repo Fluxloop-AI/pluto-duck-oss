@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from .v1 import actions, agent, chat, dbt, ingest, query, settings, data_sources
+from .v1 import actions, agent, boards, chat, dbt, ingest, query, settings, data_sources
 
 api_router = APIRouter()
 api_router.include_router(query.router, prefix="/api/v1/query", tags=["query"])
@@ -13,4 +13,5 @@ api_router.include_router(agent.router, prefix="/api/v1/agent", tags=["agent"])
 api_router.include_router(chat.router, prefix="/api/v1/chat", tags=["chat"])
 api_router.include_router(settings.router, prefix="/api/v1", tags=["settings"])
 api_router.include_router(data_sources.router, prefix="/api/v1", tags=["data-sources"])
+api_router.include_router(boards.router, prefix="/api/v1", tags=["boards"])
 

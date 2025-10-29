@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { RefreshCcwIcon, PlusIcon, SettingsIcon, DatabaseIcon } from 'lucide-react';
 
-import { ConversationList, SettingsModal, MultiTabChatPanel } from '../components/chat';
+import { SettingsModal, MultiTabChatPanel } from '../components/chat';
 import {
   DataSourcesView,
   ImportCSVModal,
@@ -11,17 +11,20 @@ import {
   ImportPostgresModal,
   ImportSQLiteModal,
 } from '../components/data-sources';
+import { BoardsView, BoardList, CreateBoardModal } from '../components/boards';
+import { useBoards } from '../hooks/useBoards';
+import type { Board } from '../lib/boardsApi';
 import { Loader } from '../components/ai-elements';
 import { fetchSettings } from '../lib/settingsApi';
 import { fetchDataSources, fetchDataSourceDetail, type DataSource, type DataSourceTable } from '../lib/dataSourcesApi';
 import { useMultiTabChat } from '../hooks/useMultiTabChat';
 import { useBackendStatus } from '../hooks/useBackendStatus';
 
-type ViewMode = 'placeholder' | 'data-sources';
+type ViewMode = 'boards' | 'data-sources';
 
 export default function WorkspacePage() {
   const { isReady: backendReady, isChecking: backendChecking } = useBackendStatus();
-  const [currentView, setCurrentView] = useState<ViewMode>('placeholder');
+  const [currentView, setCurrentView] = useState<ViewMode>('boards');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState('gpt-5-mini');
   const [selectedDataSource, setSelectedDataSource] = useState('all');
@@ -33,17 +36,18 @@ export default function WorkspacePage() {
   const [importSQLiteOpen, setImportSQLiteOpen] = useState(false);
   const [dataSourcesRefresh, setDataSourcesRefresh] = useState(0);
   const [selectedSourceForImport, setSelectedSourceForImport] = useState<DataSource | undefined>(undefined);
+  const [defaultProjectId, setDefaultProjectId] = useState<string | null>(null);
+  const [showCreateBoardModal, setShowCreateBoardModal] = useState(false);
 
   const {
-    sessions,
-    openSessionInTab,
-    handleDeleteSession,
-    handleNewConversation,
-    loadSessions,
-  } = useMultiTabChat({
-    selectedModel,
-    selectedDataSource,
-    backendReady,
+    boards,
+    activeBoard,
+    createBoard,
+    deleteBoard,
+    selectBoard,
+  } = useBoards({
+    projectId: defaultProjectId || '',
+    enabled: !!defaultProjectId && backendReady,
   });
 
   // Load default model from settings and data sources
@@ -54,6 +58,9 @@ export default function WorkspacePage() {
           const settings = await fetchSettings();
           if (settings.llm_model) {
             setSelectedModel(settings.llm_model);
+          }
+          if (settings.default_project_id) {
+            setDefaultProjectId(settings.default_project_id);
           }
         } catch (error) {
           console.error('Failed to load default model from settings', error);
@@ -157,40 +164,46 @@ export default function WorkspacePage() {
         </div>
       )}
 
-      {/* Left Sidebar - Conversation list */}
-      <aside className="hidden w-80 border-r border-border bg-muted/20 px-4 py-6 lg:flex lg:flex-col">
-        {/* Top action buttons */}
-        <div className="mb-4 flex items-center justify-end gap-2">
+      {/* Left Sidebar - Board list */}
+      <aside className="hidden w-64 border-r border-border bg-muted/20 px-3 py-4 lg:flex lg:flex-col">
+        {/* Header with new board button */}
+        <div className="mb-3 flex items-center justify-end">
           <button
             type="button"
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-card hover:bg-accent"
-            onClick={() => void loadSessions()}
-            title="Refresh"
-          >
-            <RefreshCcwIcon className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
-            onClick={handleNewConversation}
-            title="New conversation"
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
+            onClick={() => setShowCreateBoardModal(true)}
+            title="New board"
           >
             <PlusIcon className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Conversation list */}
+        {/* Board list */}
         <div className="flex-1 overflow-y-auto">
-          <ConversationList 
-            sessions={sessions} 
-            activeId={undefined}
-            onSelect={openSessionInTab} 
-            onDelete={handleDeleteSession} 
+          <BoardList
+            boards={boards}
+            activeId={activeBoard?.id}
+            onSelect={selectBoard}
+            onDelete={(board: Board) => deleteBoard(board.id)}
           />
         </div>
 
         {/* Bottom buttons */}
         <div className="mt-4 space-y-2">
+          <button
+            type="button"
+            className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${
+              currentView === 'boards'
+                ? 'border-primary/60 bg-primary/10 text-primary'
+                : 'border-border bg-card hover:bg-accent'
+            }`}
+            onClick={() => setCurrentView('boards')}
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 14a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1v-5zM14 14a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1h-4a1 1 0 01-1-1v-5z" />
+            </svg>
+            <span>Boards</span>
+          </button>
           <button
             type="button"
             className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${
@@ -219,6 +232,15 @@ export default function WorkspacePage() {
         open={settingsOpen} 
         onOpenChange={setSettingsOpen}
         onSettingsSaved={(model) => setSelectedModel(model)}
+      />
+
+      {/* Create Board Modal */}
+      <CreateBoardModal
+        open={showCreateBoardModal}
+        onOpenChange={setShowCreateBoardModal}
+        onSubmit={async (name: string, description?: string) => {
+          await createBoard(name, description);
+        }}
       />
 
       {/* Import Modals */}
@@ -251,41 +273,18 @@ export default function WorkspacePage() {
         existingSource={selectedSourceForImport}
       />
 
-      {/* Center area - Main content (boards will go here) */}
+      {/* Center area - Boards or Data Sources */}
       <div className="relative flex flex-1 flex-col overflow-hidden bg-muted/5">
         {currentView === 'data-sources' ? (
           <DataSourcesView 
             onImportClick={handleImportClick}
             refreshTrigger={dataSourcesRefresh}
           />
+        ) : defaultProjectId ? (
+          <BoardsView projectId={defaultProjectId} activeBoard={activeBoard} />
         ) : (
           <div className="flex h-full items-center justify-center">
-            <div className="text-center space-y-4">
-              <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-muted">
-                <svg
-                  className="h-8 w-8 text-muted-foreground"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M4 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 16a1 1 0 011-1h4a1 1 0 011 1v3a1 1 0 01-1 1H5a1 1 0 01-1-1v-3zM14 16a1 1 0 011-1h4a1 1 0 011 1v3a1 1 0 01-1 1h-4a1 1 0 01-1-1v-3z"
-                  />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold">Board Area</h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Boards will be displayed here
-                </p>
-                <p className="text-xs text-muted-foreground mt-2">
-                  Start a conversation to create visualizations and dashboards
-                </p>
-              </div>
-            </div>
+            <Loader />
           </div>
         )}
       </div>

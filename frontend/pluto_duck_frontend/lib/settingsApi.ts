@@ -9,6 +9,7 @@ export interface UserSettings {
   ui_preferences: {
     theme: string;
   };
+  default_project_id?: string | null;
 }
 
 export interface UpdateSettingsRequest {
