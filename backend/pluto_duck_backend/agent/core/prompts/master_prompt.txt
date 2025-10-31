@@ -8,6 +8,7 @@ CRITICAL DECISION RULES:
    - Schema exists but no SQL → "sql"
    - SQL exists but not verified → "verifier"
    - Everything complete → "finalize"
+  - If no preferred tables are known after schema inspection, ask the user to choose a table before going to SQL
 3. Once you choose "finalize", NEVER go back to other nodes
 4. If plan already exists, do NOT go back to "planner" unless the request changed
 

@@ -30,11 +30,29 @@ def build_reasoning_node():
         provider = get_llm_provider(model=state.model)
         master_prompt = try_load_prompt("master_prompt") or DEFAULT_MASTER_PROMPT
         prompt = _compose_prompt(state, master_prompt)
+        
+        logger.info(
+            f"[REASONING] INPUT STATE - conversation_id={state.conversation_id}, "
+            f"plan_count={len(state.plan)}, "
+            f"schema_preview={state.context.get('schema_preview', [])[: 3]}, "
+            f"table_columns_keys={list(state.context.get('table_columns', {}).keys())}, "
+            f"schema_completed={state.context.get('schema_completed')}, "
+            f"working_sql={bool(state.working_sql)}, "
+            f"verification_result={bool(state.verification_result)}"
+        )
+        
         response = await provider.ainvoke(prompt)
         parsed = _parse_decision(response)
         decision = parsed["next"]
+        
+        logger.info(
+            f"[REASONING] LLM RAW DECISION - decision={decision}, reason={parsed['reason'][:100]}"
+        )
+        
         if decision == "planner" and state.plan:
             decision = _auto_progress(state)
+            logger.info(f"[REASONING] AUTO-PROGRESS OVERRIDE - new_decision={decision}")
+        
         state.add_message(MessageRole.REASONING, parsed["reason"])
         state.context["reasoning_decision"] = decision
         # Store final message if provided (for finalize node)
@@ -48,6 +66,12 @@ def build_reasoning_node():
                 "reason": parsed["reason"],
             },
         )
+        
+        logger.info(
+            f"[REASONING] FINAL DECISION - decision={decision}, "
+            f"stored in context['reasoning_decision']"
+        )
+        
         return state
 
     return reasoning_node
@@ -61,10 +85,23 @@ def route_after_reasoning(state: AgentState) -> str:
 
 
 def _auto_progress(state: AgentState) -> str:
+    logger.info(
+        f"[REASONING] _auto_progress check - "
+        f"plan={bool(state.plan)}, "
+        f"schema_preview={bool(state.context.get('schema_preview'))}, "
+        f"table_columns={bool(state.context.get('table_columns'))}, "
+        f"schema_completed={state.context.get('schema_completed')}, "
+        f"working_sql={bool(state.working_sql)}, "
+        f"verification_result={bool(state.verification_result)}"
+    )
+    
     if not state.plan:
         return "planner"
     if "schema_preview" not in state.context:
         return "schema"
+    # If schema is already completed, skip re-running schema
+    if state.context.get("schema_completed") and not state.working_sql:
+        return "sql"
     if not state.working_sql:
         return "sql"
     if not state.verification_result:
@@ -76,13 +113,44 @@ def _compose_prompt(state: AgentState, master_prompt: str) -> str:
     plan_summary = "\n".join(f"- {step.description} ({step.status})" for step in state.plan) or "(no plan yet)"
     recent_messages = "\n".join(f"[{msg.role.value}] {msg.content}" for msg in state.messages[-5:])
     verification = state.verification_result or {}
-    return (
+    context_flags = []
+    sanitized_query = state.context.get("sanitized_user_query") or state.user_query
+    if state.context.get("needs_table_confirmation"):
+        context_flags.append("needs_table_confirmation=True")
+    if state.context.get("schema_completed"):
+        context_flags.append("schema_completed=True")
+    preferred_tables = state.context.get("preferred_tables") or state.preferred_tables or []
+    if preferred_tables:
+        context_flags.append("preferred_tables=" + ",".join(preferred_tables))
+    schema_preview = state.context.get("schema_preview", [])
+    table_columns = state.context.get("table_columns", {})
+    column_snippets = []
+    if isinstance(table_columns, dict):
+        for table_name, columns in table_columns.items():
+            if not columns:
+                continue
+            preview = ", ".join(columns[:8])
+            if len(columns) > 8:
+                preview += ", …"
+            column_snippets.append(f"{table_name}: {preview}")
+    context_summary = " | ".join(context_flags) if context_flags else "(none)"
+    column_summary = "; ".join(column_snippets) if column_snippets else "(none)"
+    
+    prompt_text = (
         f"{master_prompt}\n"
+        f"Sanitized user question: {sanitized_query}\n"
+        f"Context flags: {context_summary}\n"
+        f"Schema preview: {schema_preview}\n"
+        f"Column preview: {column_summary}\n"
         f"Current plan:\n{plan_summary}\n"
         f"Recent messages:\n{recent_messages}\n"
         f"Working SQL: {state.working_sql or 'N/A'}\n"
         f"Verification: {verification}\n"
     )
+    
+    logger.info(f"[REASONING] PROMPT TO LLM:\n{prompt_text}\n{'='*80}")
+    
+    return prompt_text
 
 
 def _parse_decision(response: str) -> Dict[str, str]:

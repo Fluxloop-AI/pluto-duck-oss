@@ -1,15 +1,12 @@
 'use client';
 
 import { Fragment, useCallback, useRef, useState } from 'react';
-import { AtSignIcon, CopyIcon, RefreshCcwIcon, ChevronRightIcon } from 'lucide-react';
+import { AtSignIcon, CopyIcon, RefreshCcwIcon, ChevronRightIcon, CheckIcon, XIcon } from 'lucide-react';
+import type { ToolUIPart } from 'ai';
+import { Conversation, ConversationContent, ConversationScrollButton } from '../ai-elements/conversation';
+import { Response } from '../ai-elements/response';
+import { Reasoning, ReasoningTrigger, ReasoningContent } from '../ai-elements/reasoning';
 import {
-  Conversation,
-  ConversationContent,
-  ConversationScrollButton,
-  Response,
-  Reasoning,
-  ReasoningTrigger,
-  ReasoningContent,
   PromptInput,
   PromptInputBody,
   PromptInputTextarea,
@@ -21,13 +18,41 @@ import {
   PromptInputModelSelectValue,
   PromptInputModelSelectContent,
   PromptInputModelSelectItem,
-  Actions,
-  Action,
-  Loader,
-  Suggestions,
-  Suggestion,
   type PromptInputMessage,
-} from '../ai-elements';
+} from '../ai-elements/prompt-input';
+import { Actions, Action } from '../ai-elements/actions';
+import { Loader } from '../ai-elements/loader';
+import { Suggestions, Suggestion } from '../ai-elements/suggestion';
+import {
+  Tool,
+  ToolHeader,
+  ToolContent,
+  ToolInput,
+  ToolOutput,
+} from '../ai-elements/tool';
+import {
+  Plan,
+  PlanHeader,
+  PlanTitle,
+  PlanAction,
+  PlanTrigger,
+  PlanContent,
+} from '../ai-elements/plan';
+import {
+  Task,
+  TaskTrigger,
+  TaskContent,
+  TaskItem,
+} from '../ai-elements/task';
+import {
+  Confirmation,
+  ConfirmationTitle,
+  ConfirmationRequest,
+  ConfirmationAccepted,
+  ConfirmationRejected,
+  ConfirmationActions,
+  ConfirmationAction,
+} from '../ai-elements/confirmation';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -50,6 +75,84 @@ const MODELS = [
   { id: 'gpt-5', name: 'GPT-5' },
   { id: 'gpt-5-mini', name: 'GPT-5 Mini' },
 ];
+
+// Helper functions to extract tool data from events
+function getToolState(event: any): ToolUIPart['state'] {
+  const subtype = event.subtype;
+  if (subtype === 'start' || subtype === 'chunk') return 'input-streaming';
+  if (subtype === 'error') return 'output-error';
+  if (subtype === 'end' || subtype === 'final') return 'output-available';
+  return 'input-available';
+}
+
+function getToolType(event: any): `tool-${string}` {
+  const content = event.content;
+  if (content && typeof content === 'object') {
+    if (content.tool_name) return `tool-${content.tool_name}`;
+    if (content.name) return `tool-${content.name}`;
+  }
+  return 'tool-unknown' as `tool-${string}`;
+}
+
+function getToolInput(event: any): Record<string, any> | undefined {
+  const content = event.content;
+  if (content && typeof content === 'object') {
+    if (content.input) return content.input;
+    if (content.parameters) return content.parameters;
+    if (content.args) return content.args;
+  }
+  return undefined;
+}
+
+function getToolOutput(event: any): any {
+  const content = event.content;
+  if (content && typeof content === 'object') {
+    if (content.output !== undefined) return content.output;
+    if (content.result !== undefined) return content.result;
+  }
+  return undefined;
+}
+
+function getToolError(event: any): string | undefined {
+  const content = event.content;
+  if (event.subtype === 'error') {
+    if (typeof content === 'string') return content;
+    if (content && typeof content === 'object') {
+      if (content.error) return String(content.error);
+      if (content.message) return String(content.message);
+    }
+    return 'An error occurred';
+  }
+  return undefined;
+}
+
+function getPlanData(event: any): { title: string; description?: string; tasks: string[] } {
+  const content = event.content;
+  if (!content || typeof content !== 'object') {
+    return { title: 'Plan', tasks: [] };
+  }
+  
+  const tasks = content.tasks || content.steps || [];
+  const taskArray = Array.isArray(tasks) ? tasks : [];
+  
+  return {
+    title: content.title || content.name || 'Plan',
+    description: content.description || content.summary,
+    tasks: taskArray.map((task: any) => 
+      task.title || task.name || task.description || String(task)
+    ),
+  };
+}
+
+function getToolApproval(event: any): { id: string; approved?: boolean; reason?: string } | undefined {
+  const content = event.content;
+  if (content && typeof content === 'object') {
+    if (content.approval) return content.approval;
+    // Check if approval is in metadata
+    if (event.metadata?.approval) return event.metadata.approval;
+  }
+  return undefined;
+}
 
 interface ChatPanelProps {
   activeSession: ChatSessionSummary | null;
@@ -181,28 +284,129 @@ export function ChatPanel({
 
                   {turn.toolEvents.length > 0 && (
                     <div className="space-y-2">
-                      {turn.toolEvents.map((event, index) => (
-                        <div
-                          key={`${turn.key}-tool-${index}`}
-                          className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-100"
-                        >
-                          <header className="mb-1 flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-amber-400">
-                            <span>
-                              {event.type}.{event.subtype ?? 'event'}
-                            </span>
-                            {event.timestamp && (
-                              <time className="font-normal text-slate-500">
-                                {new Date(event.timestamp).toLocaleTimeString()}
-                              </time>
-                            )}
-                          </header>
-                          <pre className="overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-amber-50">
-                            {typeof event.content === 'string'
-                              ? event.content
-                              : JSON.stringify(event.content, null, 2)}
-                          </pre>
-                        </div>
-                      ))}
+                      {turn.toolEvents.map((event, index) => {
+                        // Handle tool events
+                        if (event.type === 'tool') {
+                          const toolState = getToolState(event);
+                          const toolType = getToolType(event);
+                          const toolInput = getToolInput(event);
+                          const toolOutput = getToolOutput(event);
+                          const errorText = getToolError(event);
+                          const approval = getToolApproval(event);
+
+                          return (
+                            <Tool key={`${turn.key}-tool-${index}`} defaultOpen>
+                              <ToolHeader
+                                state={toolState}
+                                type={toolType}
+                                title={event.subtype}
+                              />
+                              <ToolContent>
+                                {toolInput && <ToolInput input={toolInput} />}
+                                
+                                {/* Approval workflow */}
+                                <Confirmation approval={approval} state={toolState}>
+                                  <ConfirmationTitle>
+                                    <ConfirmationRequest>
+                                      This tool requires your approval to execute.
+                                    </ConfirmationRequest>
+                                    <ConfirmationAccepted>
+                                      <CheckIcon className="size-4 text-green-600 dark:text-green-400" />
+                                      <span>Approved</span>
+                                    </ConfirmationAccepted>
+                                    <ConfirmationRejected>
+                                      <XIcon className="size-4 text-destructive" />
+                                      <span>
+                                        Rejected
+                                        {approval?.reason && `: ${approval.reason}`}
+                                      </span>
+                                    </ConfirmationRejected>
+                                  </ConfirmationTitle>
+                                  <ConfirmationActions>
+                                    <ConfirmationAction
+                                      onClick={() => {
+                                        // TODO: Implement approval rejection
+                                        console.log('Tool rejected');
+                                      }}
+                                      variant="outline"
+                                    >
+                                      Reject
+                                    </ConfirmationAction>
+                                    <ConfirmationAction
+                                      onClick={() => {
+                                        // TODO: Implement approval acceptance
+                                        console.log('Tool approved');
+                                      }}
+                                      variant="default"
+                                    >
+                                      Approve
+                                    </ConfirmationAction>
+                                  </ConfirmationActions>
+                                </Confirmation>
+
+                                {(toolOutput || errorText) && (
+                                  <ToolOutput output={toolOutput} errorText={errorText} />
+                                )}
+                              </ToolContent>
+                            </Tool>
+                          );
+                        }
+                        
+                        // Handle plan events
+                        if (event.type === 'plan') {
+                          const planData = getPlanData(event);
+                          const isStreaming = event.subtype === 'start' || event.subtype === 'chunk';
+                          
+                          return (
+                            <Plan key={`${turn.key}-plan-${index}`} defaultOpen isStreaming={isStreaming}>
+                              <PlanHeader>
+                                <div className="flex-1">
+                                  <PlanTitle>{planData.title}</PlanTitle>
+                                  {planData.description && (
+                                    <p className="text-sm text-muted-foreground mt-1">{planData.description}</p>
+                                  )}
+                                </div>
+                                <PlanAction>
+                                  <PlanTrigger />
+                                </PlanAction>
+                              </PlanHeader>
+                              <PlanContent>
+                                <div className="space-y-2">
+                                  {planData.tasks.map((taskText, taskIndex) => (
+                                    <TaskItem key={taskIndex}>
+                                      {taskIndex + 1}. {taskText}
+                                    </TaskItem>
+                                  ))}
+                                </div>
+                              </PlanContent>
+                            </Plan>
+                          );
+                        }
+
+                        // Fallback for other event types
+                        return (
+                          <div
+                            key={`${turn.key}-event-${index}`}
+                            className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-900 dark:text-amber-100"
+                          >
+                            <header className="mb-1 flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-200">
+                              <span>
+                                {event.type}.{event.subtype ?? 'event'}
+                              </span>
+                              {event.timestamp && (
+                                <time className="font-normal text-slate-500">
+                                  {new Date(event.timestamp).toLocaleTimeString()}
+                                </time>
+                              )}
+                            </header>
+                            <pre className="overflow-x-auto whitespace-pre-wrap break-words text-[11px]">
+                              {typeof event.content === 'string'
+                                ? event.content
+                                : JSON.stringify(event.content, null, 2)}
+                            </pre>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import asdict, is_dataclass
 from json import dumps
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional
@@ -119,25 +120,31 @@ class AgentRunManager:
         create_if_missing: bool = False,
     ) -> str:
         repo = get_chat_repository()
+        prepared = _prepare_question_and_metadata(question, metadata)
+        sanitized_question = prepared["question"]
+        metadata = prepared["metadata"]
+        extracted_tables = prepared["extracted_tables"]
+        public_metadata = {k: v for k, v in metadata.items() if not str(k).startswith("_")}
         summary = repo.get_conversation_summary(conversation_id)
 
         if summary is None:
             if not create_if_missing:
                 raise KeyError(conversation_id)
-            repo.create_conversation(conversation_id, question, metadata)
+            repo.create_conversation(conversation_id, sanitized_question, public_metadata)
 
         run_id = str(uuid4())
-        run = AgentRun(run_id, conversation_id, question, model=model, metadata=metadata)
+        run = AgentRun(run_id, conversation_id, sanitized_question, model=model, metadata=metadata)
         self._runs[run_id] = run
         _log("run_started", run_id=run_id, conversation_id=conversation_id)
         repo.append_message(
             conversation_id,
             "user",
-            {"text": question, "metadata": metadata or {}},
+            {"text": question, "metadata": public_metadata},
             run_id=run_id,
         )
         repo.set_active_run(conversation_id, run_id)
-        repo.mark_run_started(conversation_id, last_message_preview=question[:160])
+        preview_source = question if question else sanitized_question
+        repo.mark_run_started(conversation_id, last_message_preview=preview_source[:160])
         asyncio.create_task(self._execute_run(run))
         return run_id
 
@@ -151,6 +158,12 @@ class AgentRunManager:
             preferred_tables=preferred_tables,
             metadata=run.metadata,
         )
+        state.context["sanitized_user_query"] = run.question
+        if preferred_tables:
+            state.context.setdefault("preferred_table_hints", preferred_tables)
+        extracted = run.metadata.get("_extracted_tables") if isinstance(run.metadata, dict) else None
+        if extracted and not preferred_tables:
+            state.context["preferred_table_candidates"] = extracted
         state.add_message(MessageRole.USER, run.question)
         repo = get_chat_repository()
 
@@ -321,6 +334,63 @@ class AgentRunManager:
             raise KeyError(run_id)
         await run.done.wait()
         return run.result or {}
+
+
+_TABLE_TOKEN_PATTERN = re.compile(r"@(?:chat/)?([A-Za-z0-9_]+)")
+
+
+def _prepare_question_and_metadata(
+    question: str,
+    metadata: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    metadata_copy: Dict[str, Any] = dict(metadata or {})
+    sanitized, extracted_tables = _sanitize_question_tokens(question)
+    if extracted_tables:
+        metadata_copy["mentioned_tables"] = _merge_distinct_tables(
+            metadata_copy.get("mentioned_tables"),
+            extracted_tables,
+        )
+    metadata_copy.setdefault("original_question", question)
+    metadata_copy["_extracted_tables"] = extracted_tables
+    return {
+        "question": sanitized,
+        "metadata": metadata_copy,
+        "extracted_tables": extracted_tables,
+    }
+
+
+def _sanitize_question_tokens(question: str) -> tuple[str, List[str]]:
+    extracted: List[str] = []
+
+    def _replacement(match: re.Match[str]) -> str:
+        table = match.group(1)
+        extracted.append(table)
+        return table
+
+    sanitized = _TABLE_TOKEN_PATTERN.sub(_replacement, question)
+    return sanitized.strip(), _unique_preserve_order(extracted)
+
+
+def _merge_distinct_tables(
+    existing: Optional[Iterable[str]],
+    new_items: Iterable[str],
+) -> List[str]:
+    return _unique_preserve_order(list(existing or []) + list(new_items))
+
+
+def _unique_preserve_order(items: Iterable[str]) -> List[str]:
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for item in items:
+        normalized = item.strip()
+        if not normalized:
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(normalized)
+    return ordered
 
 
 def _extract_preferred_tables(metadata: Optional[Dict[str, Any]]) -> Optional[List[str]]:

@@ -296,8 +296,8 @@ export default function WorkspacePage() {
         >
           {activeBoard && (
             <>
-              <LayoutDashboard className="h-4 w-4 text-foreground" />
-              <span className="text-sm font-medium text-foreground">
+              <LayoutDashboard className="h-3.5 w-3.5 text-foreground" />
+              <span className="text-xs font-medium text-foreground">
                 {activeBoard.name}
               </span>
             </>

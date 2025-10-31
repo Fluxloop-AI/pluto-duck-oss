@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 from pluto_duck_backend.agent.core import AgentState, MessageRole
 from pluto_duck_backend.agent.core.llm.providers import get_llm_provider
 from pluto_duck_backend.agent.core.prompts import try_load_prompt
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SQL_PROMPT = (
     "Generate a SELECT SQL query that can answer the user's question using DuckDB tables."
@@ -19,6 +23,16 @@ def build_sql_node():
         provider = get_llm_provider(model=state.model)
         preferred = state.context.get("preferred_tables", []) or state.preferred_tables or []
         other_tables = state.context.get("other_tables", [])
+        candidate_tables = state.context.get("preferred_table_candidates", [])
+        user_question = state.context.get("sanitized_user_query") or state.user_query
+        table_columns = state.context.get("table_columns", {})
+        
+        logger.info(
+            f"[SQL] INPUT STATE - "
+            f"preferred={preferred}, "
+            f"candidate={candidate_tables}, "
+            f"table_columns_keys={list(table_columns.keys()) if isinstance(table_columns, dict) else 'N/A'}"
+        )
 
         if preferred:
             hint = (
@@ -26,12 +40,26 @@ def build_sql_node():
                 + ", ".join(preferred)
                 + (f"\nOther tables: {', '.join(other_tables)}" if other_tables else "")
             )
+        elif candidate_tables:
+            hint = "Candidate tables from user mention: " + ", ".join(candidate_tables)
         else:
             hint = f"Available tables: {', '.join(state.context.get('schema_preview', []))}"
 
+        if isinstance(table_columns, dict) and table_columns:
+            column_lines = []
+            for table_name, columns in table_columns.items():
+                if not columns:
+                    continue
+                preview = ", ".join(columns[:8])
+                if len(columns) > 8:
+                    preview += ", …"
+                column_lines.append(f"Columns in {table_name}: {preview}")
+            if column_lines:
+                hint += "\n" + "\n".join(column_lines)
+
         prompt = (
             f"{prompt_template}\n"
-            f"User question: {state.user_query}\n"
+            f"User question: {user_question}\n"
             f"Plan steps: {[step.description for step in state.plan]}\n"
             f"{hint}\n"
         )

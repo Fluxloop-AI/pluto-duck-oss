@@ -19,7 +19,17 @@ def build_planner_node():
 
     async def planner_node(state: AgentState) -> AgentState:
         provider = get_llm_provider(model=state.model)
-        prompt = f"{prompt_template}\nUser: {state.user_query}"
+        sanitized_query = state.context.get("sanitized_user_query") or state.user_query
+        preferred_tables = state.context.get("preferred_table_hints") or state.preferred_tables or []
+        candidate_tables = state.context.get("preferred_table_candidates", [])
+
+        prompt_lines = [prompt_template, f"User question: {sanitized_query}"]
+        if preferred_tables:
+            prompt_lines.append("Preferred tables: " + ", ".join(preferred_tables))
+        elif candidate_tables:
+            prompt_lines.append("Candidate tables from user mention: " + ", ".join(candidate_tables))
+
+        prompt = "\n".join(prompt_lines)
         response = await provider.ainvoke(prompt)
         steps = _parse_steps(response)
         state.update_plan(steps)

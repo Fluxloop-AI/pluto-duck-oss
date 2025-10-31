@@ -22,6 +22,20 @@ def build_verifier_node():
             return state
 
         run_id = str(uuid4())
+        try:
+            removed = service.cleanup()
+            if removed:
+                _log(
+                    "verifier_cleanup",
+                    conversation_id=state.conversation_id,
+                    removed_runs=removed,
+                )
+        except Exception as cleanup_error:  # pragma: no cover - best effort
+            _log(
+                "verifier_cleanup_failed",
+                conversation_id=state.conversation_id,
+                error=str(cleanup_error),
+            )
         service.submit(run_id, state.working_sql)
         try:
             job = service.execute(run_id)

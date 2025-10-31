@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -125,5 +125,35 @@ class QueryExecutionService:
             error=row[6],
             rows_affected=row[7],
         )
+
+    def cleanup(self, *, older_than_hours: int = 168) -> int:
+        """Remove historical query artifacts older than the TTL.
+
+        Drops result tables and deletes query history rows whose completion time
+        is older than ``older_than_hours`` hours. Returns the number of rows
+        removed from ``query_history``.
+        """
+
+        cutoff = datetime.now(UTC) - timedelta(hours=older_than_hours)
+        removed_rows = 0
+        with duckdb.connect(str(self.warehouse_path)) as con:
+            stale_rows = con.execute(
+                "SELECT job_id, result_relation FROM query_history WHERE completed_at IS NOT NULL AND completed_at < ?",
+                [cutoff],
+            ).fetchall()
+
+            for job_id, relation in stale_rows:
+                if relation:
+                    try:
+                        con.execute(f"DROP TABLE IF EXISTS {relation}")
+                    except duckdb.Error:
+                        # Ignore drop failures to avoid stopping the cleanup.
+                        pass
+
+            removed_rows = con.execute(
+                "DELETE FROM query_history WHERE completed_at IS NOT NULL AND completed_at < ?",
+                [cutoff],
+            ).rowcount
+        return removed_rows
 
 
