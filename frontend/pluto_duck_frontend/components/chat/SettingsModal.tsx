@@ -182,6 +182,7 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
             updated_at: new Date().toISOString(),
           },
         }));
+        setSuccessMessage('모델 다운로드를 백그라운드에서 진행 중입니다. 설정 창을 닫아도 계속됩니다.');
         scheduleStatusPolling(option.id);
       }
     } catch (err) {
@@ -309,7 +310,7 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
     <>
       {/* Main Settings Dialog */}
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[500px]">
+        <DialogContent className="sm:max-w-[500px] overflow-hidden">
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
             <DialogDescription>
@@ -322,7 +323,7 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
             <div className="text-muted-foreground">Loading settings...</div>
           </div>
         ) : (
-          <div className="grid gap-6 py-4">
+          <div className="grid gap-6 py-4 max-h-[65vh] overflow-y-auto pr-4">
             {/* Provider */}
             <div className="grid gap-2">
               <label className="text-sm font-medium">Provider</label>
@@ -403,6 +404,9 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
             {/* Local Models */}
             <div className="grid gap-2">
               <label className="text-sm font-medium">Local Models</label>
+              <p className="text-xs text-muted-foreground">
+                다운로드는 백그라운드에서 진행되며, 창을 닫아도 계속됩니다.
+              </p>
             <div className="grid gap-2">
               {LOCAL_MODEL_OPTIONS.map(option => {
                 const downloadState = localDownloadStates[option.id]?.status ?? 'idle';

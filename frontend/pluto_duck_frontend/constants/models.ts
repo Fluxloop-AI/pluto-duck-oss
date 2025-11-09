@@ -14,11 +14,19 @@ export const REMOTE_MODEL_OPTIONS = [
 
 export const LOCAL_MODEL_OPTIONS: LocalModelOption[] = [
   {
+    id: 'qwen3-14b-q5_k_m',
+    label: 'Qwen3 14B (local, Q5_K_M)',
+    repoId: 'Qwen/Qwen3-14B-GGUF',
+    filename: 'Qwen3-14B-Q5_K_M.gguf',
+    description: '14B GGUF (약 10.5GB) – 향상된 reasoning/agent 성능',
+    quantization: 'Q5_K_M',
+  },
+  {
     id: 'qwen3-8b-q4_k_m',
     label: 'Qwen3 8B (local, Q4_K_M)',
     repoId: 'Qwen/Qwen3-8B-GGUF',
     filename: 'Qwen3-8B-Q4_K_M.gguf',
-    description: '8B 베이스 모델 GGUF (약 5GB) - 기본 테스트용 로컬 모델',
+    description: '8B GGUF (약 5GB) – 경량 테스트용',
     quantization: 'Q4_K_M',
   },
 ];

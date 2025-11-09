@@ -126,6 +126,10 @@ def _compose_prompt(state: AgentState, master_prompt: str) -> str:
     verification = state.verification_result or {}
     context_flags = []
     sanitized_query = state.context.get("sanitized_user_query") or state.user_query
+    if sanitized_query and "/think" not in sanitized_query:
+        sanitized_query_with_mode = f"{sanitized_query} /think"
+    else:
+        sanitized_query_with_mode = sanitized_query or "/think"
     if state.context.get("needs_table_confirmation"):
         context_flags.append("needs_table_confirmation=True")
     if state.context.get("schema_completed"):
@@ -149,7 +153,7 @@ def _compose_prompt(state: AgentState, master_prompt: str) -> str:
     
     prompt_text = (
         f"{master_prompt}\n"
-        f"Sanitized user question: {sanitized_query}\n"
+        f"Sanitized user question: {sanitized_query_with_mode}\n"
         f"Context flags: {context_summary}\n"
         f"Schema preview: {schema_preview}\n"
         f"Column preview: {column_summary}\n"
