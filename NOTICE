@@ -1,0 +1,10 @@
+Pluto Duck OSS - Third Party Notices
+
+This product vendors the following third-party components:
+
+1) deepagents (MIT License)
+   - Source: ref/deepagents-master (vendored into backend/deepagents)
+   - Copyright (c) 2025 Harrison Chase
+   - License text: backend/deepagents/LICENSE
+
+

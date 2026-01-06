@@ -43,6 +43,26 @@ def _ensure_dbt_project(target_path: Path) -> None:
     target_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(template_path, target_path, dirs_exist_ok=True)
 
+def _ensure_default_agent_skills(target_skills_dir: Path) -> None:
+    """Copy bundled default skills into the user's skills directory if missing.
+
+    We only copy skill folders that do not already exist to avoid overwriting
+    user-customized skills.
+    """
+    template_path = _get_template_path() / "skills"
+    if not template_path.exists():
+        return
+
+    target_skills_dir.mkdir(parents=True, exist_ok=True)
+
+    for skill_dir in template_path.iterdir():
+        if not skill_dir.is_dir():
+            continue
+        dest = target_skills_dir / skill_dir.name
+        if dest.exists():
+            continue
+        shutil.copytree(skill_dir, dest)
+
 
 class DuckDBSettings(BaseModel):
     """Settings related to the embedded DuckDB warehouse."""
@@ -148,6 +168,9 @@ class PlutoDuckSettings(BaseSettings):
         
         # Initialize dbt project from template if it doesn't exist
         _ensure_dbt_project(self.dbt.project_path)
+
+        # Seed default agent skills (developer-provided) for all users
+        _ensure_default_agent_skills(self.data_dir.root / "deepagents" / "user" / "skills")
 
 
 @lru_cache(maxsize=1)

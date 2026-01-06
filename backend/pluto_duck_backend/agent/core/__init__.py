@@ -1,15 +1,10 @@
-"""Composable LangGraph-based agent workflow."""
+"""Agent core public exports.
 
-from .state import AgentMessage, AgentState, MessageRole, PlanStep
+Legacy node-based graph/state have been removed in favor of the deep-agent runtime
+under `pluto_duck_backend.agent.core.deep`.
+"""
+
 from .events import AgentEvent, EventSubType, EventType
 
-__all__ = [
-    "AgentMessage",
-    "AgentState",
-    "MessageRole",
-    "PlanStep",
-    "AgentEvent",
-    "EventType",
-    "EventSubType",
-]
+__all__ = ["AgentEvent", "EventType", "EventSubType"]
 

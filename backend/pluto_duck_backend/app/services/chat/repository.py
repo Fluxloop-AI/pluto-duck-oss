@@ -66,6 +66,44 @@ DDL_STATEMENTS = [
     )
     """,
     """
+    -- HITL approvals for tool calls (persisted; supports interrupt/resume)
+    CREATE TABLE IF NOT EXISTS agent_tool_approvals (
+        id UUID PRIMARY KEY,
+        conversation_id UUID NOT NULL,
+        run_id UUID NOT NULL,
+        status VARCHAR NOT NULL, -- pending|approved|rejected|edited|expired|cancelled
+        tool_name VARCHAR NOT NULL,
+        tool_call_id VARCHAR,
+        request_args JSON,
+        request_preview JSON,
+        policy JSON,
+        decision VARCHAR, -- approve|reject|edit
+        edited_args JSON,
+        decided_at TIMESTAMP,
+        decided_by VARCHAR,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_tool_approvals_run ON agent_tool_approvals(run_id, created_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_tool_approvals_conversation ON agent_tool_approvals(conversation_id, created_at DESC)
+    """,
+    """
+    -- Checkpointer storage for interrupt/resume (implementation will define exact semantics)
+    CREATE TABLE IF NOT EXISTS agent_checkpoints (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL,
+        checkpoint_key VARCHAR NOT NULL,
+        payload JSON,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_checkpoints_run ON agent_checkpoints(run_id, created_at DESC)
+    """,
+    """
     CREATE TABLE IF NOT EXISTS user_settings (
         key VARCHAR PRIMARY KEY,
         value JSON,
@@ -386,6 +424,145 @@ class ChatRepository:
                 ],
             )
             self._touch_conversation(conversation_id, connection=con)
+
+    # ---------------------------------------------------------------------
+    # HITL tool approvals (Phase 1 persistence primitives)
+    # ---------------------------------------------------------------------
+
+    def create_tool_approval(
+        self,
+        *,
+        approval_id: str,
+        conversation_id: str,
+        run_id: str,
+        tool_name: str,
+        tool_call_id: str,
+        request_args: Dict[str, Any],
+        request_preview: Dict[str, Any],
+        policy: Dict[str, Any],
+    ) -> None:
+        with self._connect() as con:
+            con.execute(
+                """
+                INSERT INTO agent_tool_approvals (
+                    id, conversation_id, run_id, status, tool_name, tool_call_id,
+                    request_args, request_preview, policy, created_at
+                )
+                VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                [
+                    approval_id,
+                    conversation_id,
+                    run_id,
+                    tool_name,
+                    tool_call_id,
+                    json.dumps(request_args),
+                    json.dumps(request_preview),
+                    json.dumps(policy),
+                ],
+            )
+
+    def list_tool_approvals(self, *, run_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        with self._connect() as con:
+            rows = con.execute(
+                """
+                SELECT id, status, tool_name, tool_call_id, request_preview, created_at, decided_at
+                FROM agent_tool_approvals
+                WHERE run_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                [run_id, int(limit)],
+            ).fetchall()
+        approvals: List[Dict[str, Any]] = []
+        for row in rows:
+            approval_id, status, tool_name, tool_call_id, preview_json, created_at, decided_at = row
+            approvals.append(
+                {
+                    "id": str(approval_id),
+                    "status": str(status),
+                    "tool_name": str(tool_name),
+                    "tool_call_id": str(tool_call_id) if tool_call_id is not None else None,
+                    "request_preview": json.loads(preview_json) if preview_json else None,
+                    "created_at": created_at.isoformat() if created_at else None,
+                    "decided_at": decided_at.isoformat() if decided_at else None,
+                }
+            )
+        return approvals
+
+    def get_tool_approval(self, *, approval_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as con:
+            row = con.execute(
+                """
+                SELECT
+                    id, conversation_id, run_id, status, tool_name, tool_call_id,
+                    request_args, request_preview, policy, decision, edited_args,
+                    created_at, decided_at, decided_by
+                FROM agent_tool_approvals
+                WHERE id = ?
+                """,
+                [approval_id],
+            ).fetchone()
+        if not row:
+            return None
+        (
+            id_value,
+            conversation_id,
+            run_id,
+            status,
+            tool_name,
+            tool_call_id,
+            request_args,
+            request_preview,
+            policy,
+            decision,
+            edited_args,
+            created_at,
+            decided_at,
+            decided_by,
+        ) = row
+        return {
+            "id": str(id_value),
+            "conversation_id": str(conversation_id),
+            "run_id": str(run_id),
+            "status": str(status),
+            "tool_name": str(tool_name),
+            "tool_call_id": str(tool_call_id) if tool_call_id is not None else None,
+            "request_args": json.loads(request_args) if request_args else None,
+            "request_preview": json.loads(request_preview) if request_preview else None,
+            "policy": json.loads(policy) if policy else None,
+            "decision": str(decision) if decision is not None else None,
+            "edited_args": json.loads(edited_args) if edited_args else None,
+            "created_at": created_at.isoformat() if created_at else None,
+            "decided_at": decided_at.isoformat() if decided_at else None,
+            "decided_by": str(decided_by) if decided_by is not None else None,
+        }
+
+    def decide_tool_approval(
+        self,
+        *,
+        approval_id: str,
+        decision: str,
+        edited_args: Optional[Dict[str, Any]] = None,
+        decided_by: str = "user",
+    ) -> None:
+        status_map = {"approve": "approved", "reject": "rejected", "edit": "edited"}
+        status = status_map.get(decision, "approved")
+        with self._connect() as con:
+            con.execute(
+                """
+                UPDATE agent_tool_approvals
+                SET status = ?, decision = ?, edited_args = ?, decided_at = CURRENT_TIMESTAMP, decided_by = ?
+                WHERE id = ?
+                """,
+                [
+                    status,
+                    decision,
+                    json.dumps(edited_args) if edited_args is not None else None,
+                    decided_by,
+                    approval_id,
+                ],
+            )
 
     def mark_run_completed(
         self,

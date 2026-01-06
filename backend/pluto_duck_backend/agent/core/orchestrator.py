@@ -1,4 +1,4 @@
-"""Agent orchestrator managing LangGraph runs and event streaming."""
+"""Agent orchestrator managing deep-agent runs and event streaming."""
 
 from __future__ import annotations
 
@@ -7,21 +7,22 @@ import json
 import re
 from dataclasses import asdict, is_dataclass
 from json import dumps
-from typing import Any, AsyncIterator, Dict, Iterable, List, Optional
+from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Sequence
 
 from datetime import datetime
 from enum import Enum
 from uuid import uuid4
 
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+
 from pluto_duck_backend.agent.core import (
     AgentEvent,
-    AgentState,
     EventSubType,
     EventType,
-    MessageRole,
-    PlanStep,
 )
-from pluto_duck_backend.agent.core.graph import build_agent_graph
+from pluto_duck_backend.agent.core.deep.agent import build_deep_agent
+from pluto_duck_backend.agent.core.deep.event_mapper import EventSink, PlutoDuckEventCallbackHandler
+from pluto_duck_backend.agent.core.deep.hitl import ApprovalBroker, ApprovalDecision
 from pluto_duck_backend.app.services.chat import get_chat_repository
 
 
@@ -35,10 +36,6 @@ def _serialize(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, Enum):
         return value.value
-    if isinstance(value, AgentState):
-        return value.to_dict()
-    if isinstance(value, PlanStep):
-        return asdict(value)
     if isinstance(value, dict):
         return {k: _serialize(v) for k, v in value.items()}
     if isinstance(value, list):
@@ -46,20 +43,6 @@ def _serialize(value: Any) -> Any:
     if is_dataclass(value):
         return asdict(value)
     return value
-
-
-def _extract_reasoning_message(update: Dict[str, Any]) -> Optional[str]:
-    messages = update.get("messages", [])
-    for msg in reversed(messages):
-        role = getattr(msg, "role", None)
-        if role == MessageRole.REASONING:
-            return getattr(msg, "content", None)
-    return None
-
-
-def _serialize_plan(update: Dict[str, Any]) -> List[Dict[str, Any]]:
-    plan = update.get("plan", [])
-    return [_serialize(step) for step in plan]
 
 
 def safe_dump_event(event: Dict[str, Any]) -> str:
@@ -87,6 +70,7 @@ class AgentRun:
         self.done = asyncio.Event()
         self.result: Optional[Dict[str, Any]] = None
         self.flags: Dict[str, Any] = {}
+        self.broker: Optional[ApprovalBroker] = None
 
 
 class AgentRunManager:
@@ -149,68 +133,52 @@ class AgentRunManager:
         return run_id
 
     async def _execute_run(self, run: AgentRun) -> None:
-        graph = build_agent_graph()
-        preferred_tables = _extract_preferred_tables(run.metadata)
-        state = AgentState(
-            conversation_id=run.conversation_id,
-            user_query=run.question,
-            model=run.model,
-            preferred_tables=preferred_tables,
-            metadata=run.metadata,
-        )
         repo = get_chat_repository()
 
-        previous_messages = repo.get_conversation_messages(run.conversation_id)
-        for message in previous_messages:
-            try:
-                role = MessageRole(message["role"])
-            except ValueError:
-                continue
-            content_payload = message.get("content")
-            content_text: str
-            metadata: Optional[Dict[str, Any]] = None
+        async def emit(event: AgentEvent) -> None:
+            payload = event.to_dict()
+            await run.queue.put(payload)
+            repo.log_event(run.conversation_id, payload)
+
+        run.broker = ApprovalBroker(emit=emit, run_id=run.run_id)
+
+        messages: list[BaseMessage] = []
+        for msg in repo.get_conversation_messages(run.conversation_id):
+            role = (msg.get("role") or "").lower()
+            content_payload = msg.get("content")
+            text = ""
             if isinstance(content_payload, dict):
-                content_text = str(content_payload.get("text") or "")
-                extra_metadata = dict(content_payload)
-                extra_metadata.pop("text", None)
-                metadata = extra_metadata or None
-            elif content_payload is None:
-                content_text = ""
-            else:
-                content_text = str(content_payload)
-            state.add_message(role, content_text, metadata=metadata)
+                text = str(content_payload.get("text") or "")
+            elif content_payload is not None:
+                text = str(content_payload)
+            if role == "user":
+                messages.append(HumanMessage(content=text))
+            elif role == "assistant":
+                messages.append(AIMessage(content=text))
+            elif role == "system":
+                messages.append(SystemMessage(content=text))
+            elif role == "tool":
+                messages.append(ToolMessage(content=text, tool_call_id="tool"))
 
-        if not previous_messages:
-            state.add_message(MessageRole.USER, run.question)
+        if not messages or not isinstance(messages[-1], HumanMessage):
+            messages.append(HumanMessage(content=run.question))
 
-        state.context["sanitized_user_query"] = run.question
-        if preferred_tables:
-            state.context.setdefault("preferred_table_hints", preferred_tables)
-        extracted = run.metadata.get("_extracted_tables") if isinstance(run.metadata, dict) else None
-        if extracted and not preferred_tables:
-            state.context["preferred_table_candidates"] = extracted
-        elif previous_messages:
-            last_role = previous_messages[-1].get("role")
-            if last_role not in {"user", "system", "assistant", "tool", "reasoning"}:
-                state.add_message(MessageRole.USER, run.question)
-
-        final_state: Dict[str, Any] = {}
+        final_state: Dict[str, Any] = {"finished": False}
         try:
-            async for chunk in graph.astream(state, stream_mode=["updates", "values"]):
-                if isinstance(chunk, tuple) and len(chunk) == 2:
-                    mode, payload = chunk
-                else:
-                    mode, payload = "updates", chunk
-                if mode == "updates" and isinstance(payload, dict):
-                    for node_name, update in payload.items():
-                        events = self._events_from_update(node_name, update, run)
-                        for event in events:
-                            event_dict = event.to_dict()
-                            await run.queue.put(event_dict)
-                            repo.log_event(run.conversation_id, event_dict)
-                elif mode == "values":
-                    if isinstance(payload, dict):
-                        final_state = _serialize(payload)
+            agent = build_deep_agent(
+                conversation_id=run.conversation_id,
+                run_id=run.run_id,
+                broker=run.broker,
+                model=run.model,
+            )
+            callback = PlutoDuckEventCallbackHandler(
+                sink=EventSink(emit=emit),
+                run_id=run.run_id,
+            )
+
+            result = await agent.ainvoke({"messages": messages}, config={"callbacks": [callback]})
+            answer = _extract_final_answer(result)
+            final_state = {"finished": True, "answer": answer}
         except Exception as exc:  # pragma: no cover
             event = AgentEvent(
                 type=EventType.RUN,
@@ -225,6 +193,20 @@ class AgentRunManager:
         finally:
             run.result = final_state
             final_preview = run.flags.get("final_preview") or self._final_preview(final_state)
+            if "answer" in final_state and isinstance(final_state.get("answer"), str):
+                final_answer = final_state["answer"]
+                repo.append_message(run.conversation_id, "assistant", {"text": final_answer}, run_id=run.run_id)
+                if final_answer.strip():
+                    run.flags["final_preview"] = final_answer.strip()[:160]
+                msg_event = AgentEvent(
+                    type=EventType.MESSAGE,
+                    subtype=EventSubType.FINAL,
+                    content={"text": final_answer},
+                    metadata={"run_id": run.run_id},
+                )
+                await run.queue.put(msg_event.to_dict())
+                repo.log_event(run.conversation_id, msg_event.to_dict())
+
             end_event = AgentEvent(
                 type=EventType.RUN,
                 subtype=EventSubType.END,
@@ -256,83 +238,6 @@ class AgentRunManager:
             
             asyncio.create_task(cleanup_run())
 
-    def _events_from_update(self, node_name: str, update: Dict[str, Any], run: AgentRun) -> List[AgentEvent]:
-        events: List[AgentEvent] = []
-        run_metadata = {"run_id": run.run_id}
-        
-        if node_name == "reasoning":
-            decision = update.get("context", {}).get("reasoning_decision")
-            reason = _extract_reasoning_message(update) or ""
-            # Send one reasoning event per node execution (avoid duplicates)
-            events.append(
-                AgentEvent(
-                    type=EventType.REASONING,
-                    subtype=EventSubType.CHUNK,
-                    content={"decision": decision, "reason": reason},
-                    metadata=run_metadata,
-                )
-            )
-        elif node_name == "planner":
-            plan = _serialize_plan(update)
-            events.append(
-                AgentEvent(
-                    type=EventType.TOOL,
-                    subtype=EventSubType.END,
-                    content={"tool": "planner", "plan": plan},
-                    metadata=run_metadata,
-                )
-            )
-        elif node_name == "schema":
-            preview = update.get("context", {}).get("schema_preview", [])
-            events.append(
-                AgentEvent(
-                    type=EventType.TOOL,
-                    subtype=EventSubType.CHUNK,
-                    content={"tool": "schema", "preview": preview},
-                    metadata=run_metadata,
-                )
-            )
-        elif node_name == "sql":
-            sql_text = update.get("working_sql") or ""
-            events.append(
-                AgentEvent(
-                    type=EventType.TOOL,
-                    subtype=EventSubType.CHUNK,
-                    content={"tool": "sql", "sql": sql_text},
-                    metadata=run_metadata,
-                )
-            )
-        elif node_name == "verifier":
-            result = update.get("verification_result", {})
-            events.append(
-                AgentEvent(
-                    type=EventType.TOOL,
-                    subtype=EventSubType.END,
-                    content={"tool": "verifier", "result": _serialize(result)},
-                    metadata=run_metadata,
-                )
-            )
-        elif node_name == "finalize":
-            context = update.get("context", {})
-            final_answer = context.get("final_answer", "")
-            
-            # Create event with just the final answer
-            events.append(
-                AgentEvent(
-                    type=EventType.MESSAGE,
-                    subtype=EventSubType.FINAL,
-                    content={"text": final_answer},
-                    metadata=run_metadata,
-                )
-            )
-            
-            # Save only the final answer to DB, not the entire context
-            repo = get_chat_repository()
-            repo.append_message(run.conversation_id, "assistant", {"text": final_answer}, run_id=run.run_id)
-            if isinstance(final_answer, str) and final_answer.strip():
-                run.flags["final_preview"] = final_answer.strip()[:160]
-        return events
-
     def _final_preview(self, final_state: Dict[str, Any]) -> Optional[str]:
         if not final_state:
             return None
@@ -361,6 +266,18 @@ class AgentRunManager:
             raise KeyError(run_id)
         await run.done.wait()
         return run.result or {}
+
+    def decide_approval(
+        self,
+        run_id: str,
+        approval_id: str,
+        decision: str,
+        edited_args: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        run = self._runs.get(run_id)
+        if run is None or run.broker is None:
+            raise KeyError(run_id)
+        run.broker.decide(approval_id, ApprovalDecision(decision=decision, edited_args=edited_args))
 
 
 _TABLE_TOKEN_PATTERN = re.compile(r"@(?:chat/)?([A-Za-z0-9_]+)")
@@ -454,17 +371,23 @@ def get_agent_manager() -> AgentRunManager:
 
 
 async def run_agent_once(question: str, model: Optional[str] = None) -> Dict[str, Any]:
-    graph = build_agent_graph()
-    state = AgentState(conversation_id=str(uuid4()), user_query=question, model=model)
-    state.add_message(MessageRole.USER, question)
-    final_state: Dict[str, Any] = {}
-    async for chunk in graph.astream(state, stream_mode=["updates", "values"]):
-        if isinstance(chunk, tuple) and len(chunk) == 2:
-            mode, payload = chunk
-        else:
-            mode, payload = "updates", chunk
-        if mode == "values" and isinstance(payload, dict):
-            final_state = _serialize(payload)
-    return final_state
+    manager = get_agent_manager()
+    conversation_id, run_id = manager.start_run(question, model=model)
+    await manager._runs[run_id].done.wait()  # type: ignore[attr-defined]
+    return await manager.get_result(run_id)
+
+
+def _extract_final_answer(result: Any) -> str:
+    if isinstance(result, dict):
+        msgs = result.get("messages")
+        if isinstance(msgs, list) and msgs:
+            last = msgs[-1]
+            content = getattr(last, "content", None)
+            if isinstance(content, str):
+                return content
+        text = result.get("output") or result.get("answer")
+        if isinstance(text, str):
+            return text
+    return str(result)
 
 

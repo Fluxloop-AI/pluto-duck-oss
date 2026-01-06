@@ -33,6 +33,9 @@ dependencies = [
     "pandas>=2.2,<3.0",
     "langgraph>=1.0,<2.0",
     "langchain-core>=0.3,<0.4",
+    "langchain>=0.3,<0.4",
+    "wcmatch>=8.5,<9.0",
+    "pyyaml>=6.0,<7.0",
     "aiofiles>=23.0,<24.0", # For async file uploads in boards service
     "python-multipart>=0.0.6,<0.1", # For FastAPI file upload support
 ]
@@ -67,7 +70,7 @@ pluto-duck = "pluto_duck_cli:app"
 where = ["backend", "packages"]
 
 [tool.setuptools.package-data]
-"pluto_duck_backend" = ["templates/**/*"]
+"pluto_duck_backend" = ["templates/**/*", "agent/core/deep/prompts/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
