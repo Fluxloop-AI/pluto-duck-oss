@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import logging
+from fastapi import Request
 
 from pluto_duck_backend import __version__
 from pluto_duck_backend.app.api.router import api_router
@@ -48,6 +50,28 @@ def create_app() -> FastAPI:
         title="Pluto-Duck API",
         version=__version__,
     )
+
+    request_logger = logging.getLogger("pluto_duck_backend.http")
+
+    @app.middleware("http")
+    async def log_requests(request: Request, call_next):
+        start = time.time()
+        try:
+            response = await call_next(request)
+        except Exception:
+            request_logger.exception("request_failed method=%s path=%s", request.method, request.url.path)
+            raise
+        finally:
+            duration_ms = int((time.time() - start) * 1000)
+            # Keep it short; this is for "did the request reach the backend?" debugging.
+            request_logger.info(
+                "request method=%s path=%s status=%s duration_ms=%s",
+                request.method,
+                request.url.path,
+                getattr(locals().get("response"), "status_code", "ERR"),
+                duration_ms,
+            )
+        return response
 
     app.add_middleware(
         CORSMiddleware,

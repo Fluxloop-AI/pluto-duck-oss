@@ -23,7 +23,8 @@ from pluto_duck_backend.app.core.config import (
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the Pluto-Duck backend server")
     parser.add_argument("--host", default="127.0.0.1", help="Host interface to bind")
-    parser.add_argument("--port", type=int, default=8000, help="Port to listen on")
+    # Desktop/Tauri and frontend default expect 8123; keep 8000 available via flag.
+    parser.add_argument("--port", type=int, default=8123, help="Port to listen on")
     parser.add_argument(
         "--data-root",
         type=Path,

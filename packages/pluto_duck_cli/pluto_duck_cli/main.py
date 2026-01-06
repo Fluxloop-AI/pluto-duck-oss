@@ -59,7 +59,7 @@ app = typer.Typer(help="Local-first Pluto-Duck CLI")
 @app.command()
 def run(
     host: str = typer.Option("127.0.0.1", help="Host to bind the API server"),
-    port: int = typer.Option(8000, help="Port for the API server"),
+    port: int = typer.Option(8123, help="Port for the API server"),
     reload: bool = typer.Option(
         False,
         "--reload",

@@ -10,10 +10,17 @@ from typing import Any, Dict, List, Optional
 
 import duckdb
 import threading
+import time
+from contextlib import contextmanager
 
 from pluto_duck_backend.app.core.config import get_settings
 
 _table_init_lock = threading.Lock()
+_duckdb_write_lock = threading.RLock()
+
+# Retry settings for occasional DuckDB write-write conflicts (e.g., concurrent writers)
+_WRITE_RETRY_ATTEMPTS = 5
+_WRITE_RETRY_BASE_SLEEP_SECONDS = 0.02
 
 
 DDL_STATEMENTS = [
@@ -272,6 +279,17 @@ class ChatRepository:
     def _connect(self) -> duckdb.DuckDBPyConnection:
         return duckdb.connect(str(self.warehouse_path))
 
+    @contextmanager
+    def _write_connection(self) -> duckdb.DuckDBPyConnection:
+        """Serialize DuckDB writes within a process and provide a connection."""
+        with _duckdb_write_lock:
+            with self._connect() as con:
+                yield con
+
+    def _is_write_conflict(self, exc: Exception) -> bool:
+        msg = str(exc)
+        return "write-write conflict" in msg or "Failed to commit" in msg
+
     def _ensure_tables(self) -> None:
         with _table_init_lock:
             with self._connect() as con:
@@ -280,7 +298,7 @@ class ChatRepository:
 
     def _ensure_default_project(self) -> str:
         """Ensure a default project exists and return its ID."""
-        with self._connect() as con:
+        with self._write_connection() as con:
             # Check if default project exists
             row = con.execute(
                 "SELECT id FROM projects WHERE is_default = TRUE"
@@ -337,7 +355,7 @@ class ChatRepository:
         if metadata and 'project_id' in metadata:
             project_id = metadata['project_id']
         
-        with self._connect() as con:
+        with self._write_connection() as con:
             # Check if conversation already exists
             existing = con.execute(
                 "SELECT id FROM agent_conversations WHERE id = ?",
@@ -375,7 +393,11 @@ class ChatRepository:
         connection: Optional[duckdb.DuckDBPyConnection] = None,
     ) -> None:
         owns_connection = connection is None
-        con = connection or self._connect()
+        con = connection or None
+        lock = _duckdb_write_lock if owns_connection else None
+        if owns_connection:
+            lock.acquire()
+            con = self._connect()
         try:
             seq = self._next_seq(conversation_id, connection=con)
             message_id = self._generate_uuid()
@@ -394,6 +416,7 @@ class ChatRepository:
         finally:
             if owns_connection:
                 con.close()
+                lock.release()
 
     def log_event(self, conversation_id: str, event: Dict[str, Any]) -> None:
         event_id = self._generate_uuid()
@@ -407,23 +430,33 @@ class ChatRepository:
                 timestamp_obj = datetime.now(UTC)
         else:
             timestamp_obj = datetime.now(UTC)
-        with self._connect() as con:
-            con.execute(
-                """
-                INSERT INTO agent_events (id, conversation_id, type, subtype, payload, metadata, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    event_id,
-                    conversation_id,
-                    event.get("type"),
-                    event.get("subtype"),
-                    payload,
-                    metadata_json,
-                    timestamp_obj,
-                ],
-            )
-            self._touch_conversation(conversation_id, connection=con)
+        # High-frequency writes during streaming can create write-write conflicts in DuckDB
+        # if multiple connections attempt to touch the same conversation row concurrently.
+        # We serialize writes in-process and retry briefly on conflict.
+        for attempt in range(_WRITE_RETRY_ATTEMPTS):
+            try:
+                with self._write_connection() as con:
+                    con.execute(
+                        """
+                        INSERT INTO agent_events (id, conversation_id, type, subtype, payload, metadata, timestamp)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            event_id,
+                            conversation_id,
+                            event.get("type"),
+                            event.get("subtype"),
+                            payload,
+                            metadata_json,
+                            timestamp_obj,
+                        ],
+                    )
+                    self._touch_conversation(conversation_id, connection=con)
+                break
+            except duckdb.TransactionException as exc:
+                if not self._is_write_conflict(exc) or attempt >= _WRITE_RETRY_ATTEMPTS - 1:
+                    raise
+                time.sleep(_WRITE_RETRY_BASE_SLEEP_SECONDS * (2**attempt))
 
     # ---------------------------------------------------------------------
     # HITL tool approvals (Phase 1 persistence primitives)
@@ -441,7 +474,7 @@ class ChatRepository:
         request_preview: Dict[str, Any],
         policy: Dict[str, Any],
     ) -> None:
-        with self._connect() as con:
+        with self._write_connection() as con:
             con.execute(
                 """
                 INSERT INTO agent_tool_approvals (
@@ -548,7 +581,7 @@ class ChatRepository:
     ) -> None:
         status_map = {"approve": "approved", "reject": "rejected", "edit": "edited"}
         status = status_map.get(decision, "approved")
-        with self._connect() as con:
+        with self._write_connection() as con:
             con.execute(
                 """
                 UPDATE agent_tool_approvals
@@ -570,7 +603,7 @@ class ChatRepository:
         status: str,
         final_preview: Optional[str],
     ) -> None:
-        with self._connect() as con:
+        with self._write_connection() as con:
             self._touch_conversation(
                 conversation_id,
                 status=status,
@@ -584,7 +617,7 @@ class ChatRepository:
         *,
         last_message_preview: Optional[str] = None,
     ) -> None:
-        with self._connect() as con:
+        with self._write_connection() as con:
             self._touch_conversation(
                 conversation_id,
                 status="active",
@@ -593,14 +626,14 @@ class ChatRepository:
             )
 
     def set_active_run(self, conversation_id: str, run_id: str) -> None:
-        with self._connect() as con:
+        with self._write_connection() as con:
             con.execute(
                 "UPDATE agent_conversations SET run_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 [run_id, conversation_id],
             )
 
     def delete_conversation(self, conversation_id: str) -> bool:
-        with self._connect() as con:
+        with self._write_connection() as con:
             exists = con.execute(
                 "SELECT 1 FROM agent_conversations WHERE id = ?",
                 [conversation_id],
@@ -668,10 +701,16 @@ class ChatRepository:
                     [last_message_preview, conversation_id],
                 )
             else:
-                con.execute(
-                    "UPDATE agent_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    [conversation_id],
-                )
+                try:
+                    con.execute(
+                        "UPDATE agent_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        [conversation_id],
+                    )
+                except duckdb.TransactionException as exc:
+                    # This touch is non-critical and can conflict during high-frequency event logging.
+                    if self._is_write_conflict(exc):
+                        return
+                    raise
         finally:
             if owns_connection:
                 con.close()

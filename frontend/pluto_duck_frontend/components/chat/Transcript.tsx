@@ -1,9 +1,9 @@
 'use client';
 
-import type { ToolUIPart } from 'ai';
 import { CheckIcon, XIcon } from 'lucide-react';
 import { Response } from '../ai-elements/response';
 import { Reasoning, ReasoningTrigger, ReasoningContent } from '../ai-elements/reasoning';
+import type { ToolUIApproval, ToolUIState, ToolUIType } from '../ai-elements/tool-types';
 import {
   Tool,
   ToolHeader,
@@ -223,8 +223,7 @@ function MessageContent({ content }: { content: any }) {
   );
 }
 
-// Helper functions to extract tool data from events
-function getToolState(event: any): ToolUIPart['state'] {
+function getToolState(event: any): ToolUIState {
   const subtype = event.subtype;
   if (subtype === 'start' || subtype === 'chunk') return 'input-streaming';
   if (subtype === 'error') return 'output-error';
@@ -232,13 +231,13 @@ function getToolState(event: any): ToolUIPart['state'] {
   return 'input-available';
 }
 
-function getToolType(event: any): `tool-${string}` {
+function getToolType(event: any): ToolUIType {
   const content = event.content;
   if (content && typeof content === 'object') {
     if (content.tool_name) return `tool-${content.tool_name}`;
     if (content.name) return `tool-${content.name}`;
   }
-  return 'tool-unknown' as `tool-${string}`;
+  return 'tool-unknown' as ToolUIType;
 }
 
 function getToolInput(event: any): Record<string, any> | undefined {
@@ -291,7 +290,7 @@ function getPlanData(event: any): { title: string; description?: string; tasks: 
   };
 }
 
-function getToolApproval(event: any): { id: string; approved?: boolean; reason?: string } | undefined {
+function getToolApproval(event: any): ToolUIApproval {
   const content = event.content;
   if (content && typeof content === 'object') {
     if (content.approval) return content.approval;

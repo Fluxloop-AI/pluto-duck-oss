@@ -32,8 +32,10 @@ dependencies = [
     "pyarrow>=21.0,<22.0", # Updated version
     "pandas>=2.2,<3.0",
     "langgraph>=1.0,<2.0",
-    "langchain-core>=0.3,<0.4",
-    "langchain>=0.3,<0.4",
+    "langchain-core>=1.2,<2.0",
+    "langchain>=1.2,<2.0",
+    "langchain-openai>=0.3,<1.0",
+    "openai>=1.0,<2.0",
     "wcmatch>=8.5,<9.0",
     "pyyaml>=6.0,<7.0",
     "aiofiles>=23.0,<24.0", # For async file uploads in boards service
@@ -68,6 +70,7 @@ pluto-duck = "pluto_duck_cli:app"
 
 [tool.setuptools.packages.find]
 where = ["backend", "packages"]
+include = ["pluto_duck_backend*", "pluto_duck_cli*", "deepagents*"]
 
 [tool.setuptools.package-data]
 "pluto_duck_backend" = ["templates/**/*", "agent/core/deep/prompts/**/*"]

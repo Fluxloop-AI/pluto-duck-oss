@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import logging
+import traceback
 from dataclasses import asdict, is_dataclass
 from json import dumps
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Sequence
@@ -25,10 +27,12 @@ from pluto_duck_backend.agent.core.deep.event_mapper import EventSink, PlutoDuck
 from pluto_duck_backend.agent.core.deep.hitl import ApprovalBroker, ApprovalDecision
 from pluto_duck_backend.app.services.chat import get_chat_repository
 
+logger = logging.getLogger("pluto_duck_backend.agent")
 
 def _log(message: str, **fields: Any) -> None:
+    # Use logging so messages go to backend.log (stdout print can be lost in some launch modes).
     payload = " ".join(f"{key}={value}" for key, value in fields.items()) if fields else ""
-    print(f"[agent] {message} {payload}")
+    logger.info("%s %s", message, payload)
 
 
 def _serialize(value: Any) -> Any:
@@ -129,11 +133,25 @@ class AgentRunManager:
         repo.set_active_run(conversation_id, run_id)
         preview_source = question if question else sanitized_question
         repo.mark_run_started(conversation_id, last_message_preview=preview_source[:160])
-        asyncio.create_task(self._execute_run(run))
+        task = asyncio.create_task(self._execute_run(run))
+
+        def _done_callback(t: asyncio.Task) -> None:  # pragma: no cover
+            try:
+                exc = t.exception()
+            except asyncio.CancelledError:
+                return
+            except Exception as callback_exc:
+                _log("run_task_callback_error", run_id=run_id, error=str(callback_exc))
+                return
+            if exc is not None:
+                _log("run_task_unhandled_exception", run_id=run_id, error=str(exc))
+
+        task.add_done_callback(_done_callback)
         return run_id
 
     async def _execute_run(self, run: AgentRun) -> None:
         repo = get_chat_repository()
+        _log("run_execute_start", run_id=run.run_id, conversation_id=run.conversation_id)
 
         async def emit(event: AgentEvent) -> None:
             payload = event.to_dict()
@@ -165,6 +183,7 @@ class AgentRunManager:
 
         final_state: Dict[str, Any] = {"finished": False}
         try:
+            _log("run_build_agent", run_id=run.run_id, conversation_id=run.conversation_id, model=run.model)
             agent = build_deep_agent(
                 conversation_id=run.conversation_id,
                 run_id=run.run_id,
@@ -176,20 +195,38 @@ class AgentRunManager:
                 run_id=run.run_id,
             )
 
+            _log("run_invoke_start", run_id=run.run_id, conversation_id=run.conversation_id)
             result = await agent.ainvoke({"messages": messages}, config={"callbacks": [callback]})
             answer = _extract_final_answer(result)
             final_state = {"finished": True, "answer": answer}
         except Exception as exc:  # pragma: no cover
+            # Some exceptions (e.g., AssertionError) have an empty str(). Always log repr + traceback.
+            err_type = type(exc).__name__
+            err_text = str(exc).strip()
+            err_repr = repr(exc)
+            _log(
+                "run_exception",
+                run_id=run.run_id,
+                conversation_id=run.conversation_id,
+                error_type=err_type,
+                error=err_text or err_repr,
+            )
+            logger.error(
+                "run_failed traceback run_id=%s conversation_id=%s\n%s",
+                run.run_id,
+                run.conversation_id,
+                "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+            )
             event = AgentEvent(
                 type=EventType.RUN,
                 subtype=EventSubType.ERROR,
-                content={"error": str(exc)},
+                content={"error": err_text or err_repr, "error_type": err_type},
                 metadata={"run_id": run.run_id},
             )
             await run.queue.put(event.to_dict())
-            final_state = {"error": str(exc)}
+            final_state = {"error": err_text or err_repr, "error_type": err_type}
             repo.log_event(run.conversation_id, event.to_dict())
-            _log("run_failed", run_id=run.run_id, conversation_id=run.conversation_id, error=str(exc))
+            _log("run_failed", run_id=run.run_id, conversation_id=run.conversation_id, error=err_text or err_repr)
         finally:
             run.result = final_state
             final_preview = run.flags.get("final_preview") or self._final_preview(final_state)

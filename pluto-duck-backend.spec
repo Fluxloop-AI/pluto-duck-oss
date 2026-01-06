@@ -37,11 +37,14 @@ os.environ.setdefault("PLUTODUCK_LOG_LEVEL", "INFO")
 hiddenimports = []
 hiddenimports += collect_submodules('pluto_duck_backend')
 hiddenimports += collect_submodules('llama_cpp')
+hiddenimports += collect_submodules('deepagents')
+hiddenimports += collect_submodules('langchain_openai')
+hiddenimports += collect_submodules('openai')
 
 
 a = Analysis(
     ['backend/run_backend.py'],
-    pathex=[str(PROJECT_ROOT)],
+    pathex=[str(PROJECT_ROOT), str(PROJECT_ROOT / "backend")],
     binaries=[],
     datas=EXTRA_DATA,
     hiddenimports=hiddenimports,

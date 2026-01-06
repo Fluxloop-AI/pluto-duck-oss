@@ -33,7 +33,7 @@ pnpm dev
 Create `.env.local` with:
 
 ```bash
-NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8123
 ```
 
 ## Project Structure

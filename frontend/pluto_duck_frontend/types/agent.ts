@@ -1,4 +1,4 @@
-export type AgentEventType = 'reasoning' | 'tool' | 'message' | 'run';
+export type AgentEventType = 'reasoning' | 'tool' | 'message' | 'plan' | 'run';
 
 export type AgentEventSubtype = 'start' | 'chunk' | 'end' | 'final' | 'error';
 
@@ -14,6 +14,10 @@ export type AgentConversationEvent = AgentEvent & {
   type: 'reasoning' | 'message';
 };
 
+export type AgentPlanEvent = AgentEvent & {
+  type: 'plan';
+};
+
 export type AgentToolEvent = AgentEvent & {
   type: 'tool';
 };
@@ -22,4 +26,4 @@ export type AgentRunEvent = AgentEvent & {
   type: 'run';
 };
 
-export type AgentEventAny = AgentConversationEvent | AgentToolEvent | AgentRunEvent;
+export type AgentEventAny = AgentConversationEvent | AgentPlanEvent | AgentToolEvent | AgentRunEvent;

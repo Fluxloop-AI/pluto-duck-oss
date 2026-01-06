@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -11,6 +12,7 @@ from pluto_duck_backend.app.services.chat import ChatRepository, ConversationSum
 from pluto_duck_backend.agent.core.orchestrator import get_agent_manager
 
 router = APIRouter()
+logger = logging.getLogger("pluto_duck_backend.api.chat")
 
 
 class ConversationResponse(BaseModel):
@@ -116,6 +118,11 @@ async def create_conversation(
         model=payload.model,
         metadata=payload.metadata,
       )
+      logger.info(
+        "chat_create_conversation existing conversation_id=%s run_id=%s",
+        payload.conversation_id,
+        run_id,
+      )
       return CreateConversationResponse(
         id=payload.conversation_id,
         run_id=run_id,
@@ -131,6 +138,7 @@ async def create_conversation(
       model=payload.model,
       metadata=payload.metadata,
     )
+    logger.info("chat_create_conversation new conversation_id=%s run_id=%s", conversation_id, run_id)
     # Preserve existing metadata (especially project_id) and add model if not present
     metadata = dict(payload.metadata or {})  # Create a copy to avoid mutation
     if payload.model and "model" not in metadata:
@@ -192,11 +200,13 @@ async def append_message(
         model=payload.model,
         metadata=payload.metadata,
       )
+      logger.info("chat_append_message queued conversation_id=%s run_id=%s", conversation_id, run_id)
     except KeyError as exc:
       raise HTTPException(status_code=404, detail="Conversation not found") from exc
     return AppendMessageResponse(status="queued", run_id=run_id, events_url=f"/api/v1/agent/{run_id}/events", conversation_id=conversation_id)
 
   repo.append_message(conversation_id, payload.role, payload.content, run_id=payload.run_id)
+  logger.info("chat_append_message appended conversation_id=%s role=%s", conversation_id, payload.role)
   return AppendMessageResponse(status="appended", conversation_id=conversation_id)
 
 

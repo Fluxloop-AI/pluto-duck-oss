@@ -9,11 +9,11 @@ This module wires together:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
 from langchain.agents.middleware.types import AgentMiddleware
-from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from deepagents import create_deep_agent
@@ -21,13 +21,12 @@ from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.filesystem import FilesystemBackend
 
 from pluto_duck_backend.app.core.config import get_settings
-from pluto_duck_backend.agent.core.llm.providers import get_llm_provider
+from pluto_duck_backend.app.services.chat import get_chat_repository
 
 from .hitl import ApprovalBroker
 from .middleware.approvals import ApprovalPersistenceMiddleware, PlutoDuckHITLConfig
 from .middleware.memory import AgentMemoryMiddleware
 from .middleware.skills import SkillsMiddleware
-from .model import PlutoDuckChatModel
 from .prompts import load_default_agent_prompt
 from .tools import build_default_tools
 
@@ -121,8 +120,36 @@ def build_deep_agent(
         },
     )
 
-    provider = get_llm_provider(model=model)
-    chat_model: BaseChatModel = PlutoDuckChatModel(provider, model_name=model or "pluto-duck")
+    # Tool calling requires a ChatModel that implements bind_tools().
+    # Prefer provider-specific LangChain integrations when available (e.g., langchain-openai).
+    settings = get_settings()
+    repo = get_chat_repository()
+    db_settings = repo.get_settings()
+
+    effective_provider = (db_settings.get("llm_provider") or settings.agent.provider or "openai").lower()
+    effective_model = model or db_settings.get("llm_model") or settings.agent.model or "gpt-4o-mini"
+    effective_api_key = db_settings.get("llm_api_key") or settings.agent.api_key or os.getenv("OPENAI_API_KEY")
+
+    if effective_provider == "openai":
+        from langchain_openai import ChatOpenAI  # type: ignore
+
+        if not effective_api_key:
+            raise RuntimeError(
+                "OpenAI API key is not configured. Set it in Settings (llm_api_key) or via OPENAI_API_KEY."
+            )
+
+        chat_model = ChatOpenAI(
+            model=effective_model,
+            api_key=effective_api_key,
+            base_url=str(settings.agent.api_base) if settings.agent.api_base else None,
+        )
+    else:
+        # PlutoDuckChatModel does not support tool calling (bind_tools) yet.
+        # Fail loudly with a clear error instead of raising NotImplementedError deep inside LangChain.
+        raise RuntimeError(
+            f"LLM provider '{effective_provider}' is not supported for deep agent tool-calling yet. "
+            "Use provider 'openai'."
+        )
 
     hitl_config = PlutoDuckHITLConfig(conversation_id=conversation_id, run_id=run_id)
     default_agent_md = load_default_agent_prompt()
