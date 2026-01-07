@@ -112,12 +112,8 @@ export function useBoards({ projectId, enabled = true }: UseBoardsOptions) {
     if (projectId && enabled) {
       void loadBoards();
       
-      // Refresh boards list every minute to sync updated_at and sort order
-      const interval = setInterval(() => {
-        void loadBoards();
-      }, 60000); // 60 seconds
-
-      return () => clearInterval(interval);
+      // Note: Removed 60-second interval refresh as it was causing unnecessary reloads
+      // If you need periodic sync, implement it with a ref to avoid stale closures
     } else {
       // No project or disabled - clear boards and active board
       setBoards([]);

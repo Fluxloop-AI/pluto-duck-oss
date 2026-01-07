@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { LayoutDashboard } from 'lucide-react';
 import { BoardToolbar } from './BoardToolbar';
 import { BoardEditor } from '../editor/BoardEditor';
@@ -45,35 +45,27 @@ function migrateToTabs(board: Board): BoardTab[] {
 }
 
 export function BoardsView({ projectId, activeBoard, onBoardUpdate }: BoardsViewProps) {
-  // Initialize tabs from board settings
-  const [tabs, setTabs] = useState<BoardTab[]>(() => 
-    activeBoard ? migrateToTabs(activeBoard) : []
-  );
-  
-  const [activeTabId, setActiveTabId] = useState<string | null>(() => {
-    if (!activeBoard) return null;
+  // Initialize tabs from board settings - use useMemo to ensure consistent IDs
+  const initialData = useMemo(() => {
+    if (!activeBoard) {
+      return { tabs: [], activeTabId: null };
+    }
+    const tabs = migrateToTabs(activeBoard);
     const settings = activeBoard.settings || {};
-    const initialTabs = migrateToTabs(activeBoard);
-    return settings.activeTabId || initialTabs[0]?.id || null;
-  });
+    const activeTabId = settings.activeTabId && tabs.find(t => t.id === settings.activeTabId)
+      ? settings.activeTabId
+      : tabs[0]?.id || null;
+    return { tabs, activeTabId };
+  }, [activeBoard?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [tabs, setTabs] = useState<BoardTab[]>(initialData.tabs);
+  const [activeTabId, setActiveTabId] = useState<string | null>(initialData.activeTabId);
 
   // Update tabs when board changes
   useEffect(() => {
-    if (activeBoard) {
-      const newTabs = migrateToTabs(activeBoard);
-      setTabs(newTabs);
-      
-      const settings = activeBoard.settings || {};
-      // Keep activeTabId if it exists in new tabs, otherwise use first tab
-      const validTabId = newTabs.find(t => t.id === settings.activeTabId)?.id 
-        || newTabs[0]?.id 
-        || null;
-      setActiveTabId(validTabId);
-    } else {
-      setTabs([]);
-      setActiveTabId(null);
-    }
-  }, [activeBoard?.id]); // Only when board changes
+    setTabs(initialData.tabs);
+    setActiveTabId(initialData.activeTabId);
+  }, [initialData]);
 
   // Get active tab
   const activeTab = useMemo(() => 
@@ -81,24 +73,34 @@ export function BoardsView({ projectId, activeBoard, onBoardUpdate }: BoardsView
     [tabs, activeTabId]
   );
 
-  // Save tabs to backend
+  // Save tabs to backend - use ref to avoid stale closures
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isSavingRef = useRef(false);
+  
   const saveTabs = useCallback(async (newTabs: BoardTab[], newActiveTabId?: string) => {
-    if (!activeBoard) return;
+    if (!activeBoard || isSavingRef.current) return;
     
-    try {
-      await updateBoard(activeBoard.id, {
-        settings: {
-          ...activeBoard.settings,
-          tabs: newTabs,
-          activeTabId: newActiveTabId || activeTabId,
-          // Clear legacy content field after migration
-          content: undefined,
-        },
-      });
-    } catch (error) {
-      console.error('Failed to save tabs:', error);
+    // Debounce saves to prevent too many API calls
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
     }
-  }, [activeBoard, activeTabId]);
+    
+    saveTimeoutRef.current = setTimeout(async () => {
+      isSavingRef.current = true;
+      try {
+        await updateBoard(activeBoard.id, {
+          settings: {
+            tabs: newTabs,
+            activeTabId: newActiveTabId || activeTabId,
+          },
+        });
+      } catch (error) {
+        console.error('Failed to save tabs:', error);
+      } finally {
+        isSavingRef.current = false;
+      }
+    }, 500); // 500ms debounce for tab operations
+  }, [activeBoard?.id, activeTabId]); // Use activeBoard.id instead of activeBoard object
 
   // Tab operations
   const handleSelectTab = useCallback((tabId: string) => {
