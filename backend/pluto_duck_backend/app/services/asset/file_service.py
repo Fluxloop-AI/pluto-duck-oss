@@ -1,0 +1,536 @@
+"""File Asset service - Uploaded File (CSV/Parquet) management.
+
+This service handles file-based assets that are imported directly into DuckDB:
+1. CSV files → read_csv()
+2. Parquet files → read_parquet()
+
+These bypass the Raw Zone (ATTACH) and go directly to Asset Zone.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+
+import duckdb
+
+from pluto_duck_backend.app.core.config import get_settings
+from .errors import AssetError, AssetNotFoundError, AssetValidationError
+
+
+# =============================================================================
+# Data Models
+# =============================================================================
+
+
+@dataclass
+class FileAsset:
+    """Represents an uploaded file asset.
+
+    Attributes:
+        id: Unique identifier
+        name: Human-readable name
+        file_path: Path to the source file
+        file_type: Type of file (csv, parquet)
+        table_name: Name of the DuckDB table
+        description: Optional description
+        row_count: Number of rows (after import)
+        column_count: Number of columns
+        file_size_bytes: Size of source file
+        created_at: When the asset was created
+        updated_at: When the asset was last updated
+    """
+
+    id: str
+    name: str
+    file_path: str
+    file_type: Literal["csv", "parquet"]
+    table_name: str
+    description: Optional[str] = None
+    row_count: Optional[int] = None
+    column_count: Optional[int] = None
+    file_size_bytes: Optional[int] = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "file_path": self.file_path,
+            "file_type": self.file_type,
+            "table_name": self.table_name,
+            "description": self.description,
+            "row_count": self.row_count,
+            "column_count": self.column_count,
+            "file_size_bytes": self.file_size_bytes,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "FileAsset":
+        """Create from dictionary."""
+        created_at = data.get("created_at")
+        updated_at = data.get("updated_at")
+
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        if isinstance(updated_at, str):
+            updated_at = datetime.fromisoformat(updated_at)
+
+        return cls(
+            id=data["id"],
+            name=data["name"],
+            file_path=data["file_path"],
+            file_type=data["file_type"],
+            table_name=data["table_name"],
+            description=data.get("description"),
+            row_count=data.get("row_count"),
+            column_count=data.get("column_count"),
+            file_size_bytes=data.get("file_size_bytes"),
+            created_at=created_at or datetime.now(UTC),
+            updated_at=updated_at or datetime.now(UTC),
+        )
+
+
+# =============================================================================
+# File Asset Service
+# =============================================================================
+
+
+def _to_identifier(name: str) -> str:
+    """Convert a name to a valid SQL identifier."""
+    # Remove special characters, keep alphanumeric and underscores
+    name = re.sub(r"[^\w]", "_", name)
+    # Remove consecutive underscores
+    name = re.sub(r"_+", "_", name)
+    # Strip leading/trailing underscores
+    name = name.strip("_")
+    # Ensure it starts with a letter or underscore
+    if name and name[0].isdigit():
+        name = "_" + name
+    return name.lower() or "unnamed"
+
+
+def _generate_id() -> str:
+    """Generate a unique ID for a file asset."""
+    import uuid
+    return f"file_{uuid.uuid4().hex[:12]}"
+
+
+class FileAssetService:
+    """Service for managing Uploaded File assets (CSV/Parquet).
+
+    These files go directly to Asset Zone, bypassing Raw Zone (ATTACH).
+
+    Example:
+        service = FileAssetService(project_id, warehouse_path)
+
+        # Import a CSV file
+        asset = service.import_file(
+            file_path="/path/to/data.csv",
+            file_type="csv",
+            table_name="customers",
+            name="Customer Data",
+        )
+
+        # List all file assets
+        assets = service.list_files()
+
+        # Delete a file asset
+        service.delete_file(asset.id)
+    """
+
+    METADATA_SCHEMA = "_file_assets"
+    METADATA_TABLE = "files"
+
+    def __init__(
+        self,
+        project_id: str,
+        warehouse_path: Path,
+    ):
+        """Initialize the file asset service.
+
+        Args:
+            project_id: Project identifier for isolation
+            warehouse_path: Path to the main DuckDB warehouse
+        """
+        self.project_id = project_id
+        self.warehouse_path = warehouse_path
+        self._ensure_metadata_tables()
+
+    def _get_connection(self) -> duckdb.DuckDBPyConnection:
+        """Get a DuckDB connection."""
+        return duckdb.connect(str(self.warehouse_path))
+
+    def _ensure_metadata_tables(self) -> None:
+        """Ensure metadata tables exist."""
+        with self._get_connection() as conn:
+            conn.execute(f"CREATE SCHEMA IF NOT EXISTS {self.METADATA_SCHEMA}")
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self.METADATA_SCHEMA}.{self.METADATA_TABLE} (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    file_type TEXT NOT NULL,
+                    table_name TEXT NOT NULL,
+                    description TEXT,
+                    row_count BIGINT,
+                    column_count INTEGER,
+                    file_size_bytes BIGINT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+    # =========================================================================
+    # CRUD Operations
+    # =========================================================================
+
+    def import_file(
+        self,
+        file_path: str,
+        file_type: Literal["csv", "parquet"],
+        table_name: str,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        overwrite: bool = True,
+    ) -> FileAsset:
+        """Import a file into DuckDB as a table.
+
+        Args:
+            file_path: Path to the source file
+            file_type: Type of file ("csv" or "parquet")
+            table_name: Name for the DuckDB table
+            name: Human-readable name (defaults to table_name)
+            description: Optional description
+            overwrite: If True, drop existing table first
+
+        Returns:
+            Created FileAsset
+
+        Raises:
+            AssetValidationError: If validation fails
+            AssetError: If import fails
+        """
+        # Validate table name
+        safe_table = _to_identifier(table_name)
+        if not safe_table:
+            raise AssetValidationError("Invalid table name")
+
+        # Validate file exists
+        path = Path(file_path)
+        if not path.exists():
+            raise AssetValidationError(f"File not found: {file_path}")
+
+        # Get file size
+        file_size_bytes = path.stat().st_size
+
+        # Generate ID
+        asset_id = _generate_id()
+
+        with self._get_connection() as conn:
+            # Drop existing table if overwrite
+            if overwrite:
+                conn.execute(f"DROP TABLE IF EXISTS {safe_table}")
+            else:
+                # Check if table exists
+                result = conn.execute(f"""
+                    SELECT COUNT(*) FROM information_schema.tables
+                    WHERE table_name = '{safe_table}'
+                """).fetchone()
+                if result and result[0] > 0:
+                    raise AssetValidationError(f"Table '{safe_table}' already exists")
+
+            # Create table from file
+            try:
+                if file_type == "csv":
+                    conn.execute(f"""
+                        CREATE TABLE {safe_table} AS
+                        SELECT * FROM read_csv('{file_path}', auto_detect=true)
+                    """)
+                elif file_type == "parquet":
+                    conn.execute(f"""
+                        CREATE TABLE {safe_table} AS
+                        SELECT * FROM read_parquet('{file_path}')
+                    """)
+                else:
+                    raise AssetValidationError(f"Unsupported file type: {file_type}")
+            except duckdb.Error as e:
+                raise AssetError(f"Failed to import file: {e}")
+
+            # Get row and column count
+            row_count = conn.execute(f"SELECT COUNT(*) FROM {safe_table}").fetchone()[0]
+            column_count = len(conn.execute(f"DESCRIBE {safe_table}").fetchall())
+
+            # Save metadata
+            now = datetime.now(UTC)
+            conn.execute(f"""
+                INSERT INTO {self.METADATA_SCHEMA}.{self.METADATA_TABLE}
+                (id, project_id, name, file_path, file_type, table_name, description,
+                 row_count, column_count, file_size_bytes, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, [
+                asset_id,
+                self.project_id,
+                name or table_name,
+                file_path,
+                file_type,
+                safe_table,
+                description,
+                row_count,
+                column_count,
+                file_size_bytes,
+                now,
+                now,
+            ])
+
+        return FileAsset(
+            id=asset_id,
+            name=name or table_name,
+            file_path=file_path,
+            file_type=file_type,
+            table_name=safe_table,
+            description=description,
+            row_count=row_count,
+            column_count=column_count,
+            file_size_bytes=file_size_bytes,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def get_file(self, file_id: str) -> Optional[FileAsset]:
+        """Get a file asset by ID.
+
+        Args:
+            file_id: File asset identifier
+
+        Returns:
+            FileAsset if found, None otherwise
+        """
+        with self._get_connection() as conn:
+            result = conn.execute(f"""
+                SELECT id, name, file_path, file_type, table_name, description,
+                       row_count, column_count, file_size_bytes, created_at, updated_at
+                FROM {self.METADATA_SCHEMA}.{self.METADATA_TABLE}
+                WHERE id = ? AND project_id = ?
+            """, [file_id, self.project_id]).fetchone()
+
+            if not result:
+                return None
+
+            return FileAsset(
+                id=result[0],
+                name=result[1],
+                file_path=result[2],
+                file_type=result[3],
+                table_name=result[4],
+                description=result[5],
+                row_count=result[6],
+                column_count=result[7],
+                file_size_bytes=result[8],
+                created_at=result[9],
+                updated_at=result[10],
+            )
+
+    def list_files(self) -> List[FileAsset]:
+        """List all file assets for this project.
+
+        Returns:
+            List of FileAsset objects
+        """
+        with self._get_connection() as conn:
+            results = conn.execute(f"""
+                SELECT id, name, file_path, file_type, table_name, description,
+                       row_count, column_count, file_size_bytes, created_at, updated_at
+                FROM {self.METADATA_SCHEMA}.{self.METADATA_TABLE}
+                WHERE project_id = ?
+                ORDER BY created_at DESC
+            """, [self.project_id]).fetchall()
+
+            return [
+                FileAsset(
+                    id=r[0],
+                    name=r[1],
+                    file_path=r[2],
+                    file_type=r[3],
+                    table_name=r[4],
+                    description=r[5],
+                    row_count=r[6],
+                    column_count=r[7],
+                    file_size_bytes=r[8],
+                    created_at=r[9],
+                    updated_at=r[10],
+                )
+                for r in results
+            ]
+
+    def delete_file(self, file_id: str, *, drop_table: bool = True) -> bool:
+        """Delete a file asset.
+
+        Args:
+            file_id: File asset identifier
+            drop_table: If True, also drop the DuckDB table
+
+        Returns:
+            True if deleted, False if not found
+        """
+        with self._get_connection() as conn:
+            # Get table name first
+            result = conn.execute(f"""
+                SELECT table_name FROM {self.METADATA_SCHEMA}.{self.METADATA_TABLE}
+                WHERE id = ? AND project_id = ?
+            """, [file_id, self.project_id]).fetchone()
+
+            if not result:
+                return False
+
+            table_name = result[0]
+
+            # Drop the table if requested
+            if drop_table:
+                try:
+                    conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+                except duckdb.Error:
+                    pass  # Table might not exist
+
+            # Delete metadata
+            conn.execute(f"""
+                DELETE FROM {self.METADATA_SCHEMA}.{self.METADATA_TABLE}
+                WHERE id = ? AND project_id = ?
+            """, [file_id, self.project_id])
+
+            return True
+
+    def refresh_file(self, file_id: str) -> FileAsset:
+        """Refresh a file asset by re-importing from the source file.
+
+        Args:
+            file_id: File asset identifier
+
+        Returns:
+            Updated FileAsset
+
+        Raises:
+            AssetNotFoundError: If file asset not found
+        """
+        asset = self.get_file(file_id)
+        if not asset:
+            raise AssetNotFoundError(file_id)
+
+        # Re-import with same settings
+        return self.import_file(
+            file_path=asset.file_path,
+            file_type=asset.file_type,
+            table_name=asset.table_name,
+            name=asset.name,
+            description=asset.description,
+            overwrite=True,
+        )
+
+    def get_table_schema(self, file_id: str) -> List[Dict[str, Any]]:
+        """Get the schema of the imported table.
+
+        Args:
+            file_id: File asset identifier
+
+        Returns:
+            List of column definitions
+
+        Raises:
+            AssetNotFoundError: If file asset not found
+        """
+        asset = self.get_file(file_id)
+        if not asset:
+            raise AssetNotFoundError(file_id)
+
+        with self._get_connection() as conn:
+            results = conn.execute(f"DESCRIBE {asset.table_name}").fetchall()
+            return [
+                {
+                    "column_name": r[0],
+                    "column_type": r[1],
+                    "null": r[2],
+                    "key": r[3],
+                    "default": r[4],
+                    "extra": r[5],
+                }
+                for r in results
+            ]
+
+    def preview_data(
+        self,
+        file_id: str,
+        *,
+        limit: int = 100,
+    ) -> Dict[str, Any]:
+        """Preview data from the imported table.
+
+        Args:
+            file_id: File asset identifier
+            limit: Maximum number of rows
+
+        Returns:
+            Dict with columns and rows
+
+        Raises:
+            AssetNotFoundError: If file asset not found
+        """
+        asset = self.get_file(file_id)
+        if not asset:
+            raise AssetNotFoundError(file_id)
+
+        with self._get_connection() as conn:
+            result = conn.execute(f"SELECT * FROM {asset.table_name} LIMIT {limit}")
+            columns = [desc[0] for desc in result.description]
+            rows = result.fetchall()
+
+            return {
+                "columns": columns,
+                "rows": [list(row) for row in rows],
+                "total_rows": asset.row_count,
+            }
+
+
+# =============================================================================
+# Singleton factory
+# =============================================================================
+
+
+_file_asset_services: Dict[str, FileAssetService] = {}
+
+
+def get_file_asset_service(project_id: Optional[str] = None) -> FileAssetService:
+    """Get a FileAssetService instance for a project.
+
+    Args:
+        project_id: Project ID (uses default if not provided)
+
+    Returns:
+        FileAssetService instance
+    """
+    from pluto_duck_backend.app.services.chat import get_chat_repository
+
+    settings = get_settings()
+
+    if project_id is None:
+        chat_repo = get_chat_repository()
+        project_id = chat_repo._default_project_id
+
+    if project_id not in _file_asset_services:
+        _file_asset_services[project_id] = FileAssetService(
+            project_id=project_id,
+            warehouse_path=settings.duckdb.path,
+        )
+
+    return _file_asset_services[project_id]
+

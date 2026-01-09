@@ -522,17 +522,17 @@ class SourceService:
         Since each project has its own warehouse, no filtering is needed.
         """
         with self._connect() as con:
-            rows = con.execute(
-                """
-                SELECT a.id, a.name, a.source_type, a.connection_config,
-                       a.attached_at, a.status, a.error_message, a.metadata,
-                       a.project_id, a.description,
-                       (SELECT COUNT(*) FROM _sources.cached_tables c WHERE c.source_name = a.name)
-                FROM _sources.attached a
-                WHERE a.status != 'detached'
-                ORDER BY COALESCE(a.updated_at, a.attached_at) DESC
-                """
-            ).fetchall()
+                rows = con.execute(
+                    """
+                    SELECT a.id, a.name, a.source_type, a.connection_config,
+                           a.attached_at, a.status, a.error_message, a.metadata,
+                           a.project_id, a.description,
+                           (SELECT COUNT(*) FROM _sources.cached_tables c WHERE c.source_name = a.name)
+                    FROM _sources.attached a
+                    WHERE a.status != 'detached'
+                    ORDER BY COALESCE(a.updated_at, a.attached_at) DESC
+                    """
+                ).fetchall()
 
         return [self._row_to_attached_source(row) for row in rows]
 

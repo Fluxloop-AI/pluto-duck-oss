@@ -1,20 +1,29 @@
-"""Asset service - Saved Analysis (duckpipe Pipeline wrapper).
+"""Asset service - Saved Analysis and File Asset management.
 
 Provides Pluto Duck integration with duckpipe:
-- Analysis CRUD operations
+- Analysis CRUD operations (Saved Analysis)
+- File Asset management (CSV/Parquet imports)
 - Execution with HITL support
 - Freshness and lineage tracking
 - Agent tool integration
 """
 
 from .service import AssetService, get_asset_service
-from .errors import AssetError, AssetNotFoundError, AssetExecutionError
+from .file_service import FileAssetService, FileAsset, get_file_asset_service
+from .errors import AssetError, AssetNotFoundError, AssetExecutionError, AssetValidationError
 
 __all__ = [
+    # Analysis (Saved Analysis)
     "AssetService",
     "get_asset_service",
+    # File Asset (CSV/Parquet)
+    "FileAssetService",
+    "FileAsset",
+    "get_file_asset_service",
+    # Errors
     "AssetError",
     "AssetNotFoundError",
     "AssetExecutionError",
+    "AssetValidationError",
 ]
 

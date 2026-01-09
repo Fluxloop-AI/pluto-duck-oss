@@ -13,7 +13,7 @@ import {
 } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
-import { createDataSource, importTable } from '../../lib/dataSourcesApi';
+import { importFile } from '../../lib/fileAssetApi';
 
 interface ImportCSVModalProps {
   projectId: string;
@@ -61,18 +61,17 @@ export function ImportCSVModal({ projectId, open, onOpenChange, onImportSuccess 
 
     setImporting(true);
     try {
-      const source = await createDataSource(projectId, {
+      // Use File Asset API - goes directly to Asset Zone
+      const asset = await importFile(projectId, {
+        file_path: filePath.trim(),
+        file_type: 'csv',
+        table_name: tableName.trim(),
         name: name.trim(),
         description: description.trim() || undefined,
-        connector_type: 'csv',
-        source_config: { path: filePath.trim() },
-      });
-
-      const table = await importTable(projectId, source.name, {
-        target_table: tableName.trim(),
         overwrite,
       });
-      setSuccessMessage(`Successfully imported ${table.rows_count ?? 0} rows`);
+      
+      setSuccessMessage(`Successfully imported ${asset.row_count ?? 0} rows`);
       
       // Reset form
       setName('');

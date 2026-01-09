@@ -145,7 +145,7 @@ export default function WorkspacePage() {
       })();
     }
   }, [backendReady]);
-
+        
   // Load data sources when project is selected
   useEffect(() => {
     if (backendReady && defaultProjectId) {
