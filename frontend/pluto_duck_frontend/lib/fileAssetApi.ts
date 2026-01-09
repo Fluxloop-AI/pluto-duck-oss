@@ -82,12 +82,19 @@ export async function importFile(
   request: ImportFileRequest
 ): Promise<FileAsset> {
   const url = buildUrl('/files', projectId);
+  console.log('[fileAssetApi] importFile URL:', url);
+  console.log('[fileAssetApi] importFile request:', request);
+  
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
   });
-  return handleResponse<FileAsset>(response);
+  
+  console.log('[fileAssetApi] importFile response status:', response.status);
+  const result = await handleResponse<FileAsset>(response);
+  console.log('[fileAssetApi] importFile result:', result);
+  return result;
 }
 
 /**
@@ -95,8 +102,14 @@ export async function importFile(
  */
 export async function listFileAssets(projectId: string): Promise<FileAsset[]> {
   const url = buildUrl('/files', projectId);
+  console.log('[fileAssetApi] listFileAssets URL:', url);
+  
   const response = await fetch(url);
-  return handleResponse<FileAsset[]>(response);
+  console.log('[fileAssetApi] listFileAssets response status:', response.status);
+  
+  const result = await handleResponse<FileAsset[]>(response);
+  console.log('[fileAssetApi] listFileAssets result:', result);
+  return result;
 }
 
 /**

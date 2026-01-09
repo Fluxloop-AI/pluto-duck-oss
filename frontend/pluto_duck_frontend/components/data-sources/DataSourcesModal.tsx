@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { DatabaseIcon } from 'lucide-react';
+import { DatabaseIcon, FileSpreadsheet, ArrowRight } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -18,27 +18,45 @@ import {
   type DataSource,
   type DataSourceTable,
 } from '../../lib/dataSourcesApi';
+import { listFileAssets, type FileAsset } from '../../lib/fileAssetApi';
 import { SourceCard } from './SourceCard';
 import { ConnectorGrid } from './ConnectorGrid';
 
 interface DataSourcesModalProps {
+  projectId?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImportClick: (connectorType: string, source?: DataSource) => void;
   refreshTrigger?: number;
+  onNavigateToAssets?: () => void;
 }
 
-export function DataSourcesModal({ open, onOpenChange, onImportClick, refreshTrigger }: DataSourcesModalProps) {
+export function DataSourcesModal({ projectId, open, onOpenChange, onImportClick, refreshTrigger, onNavigateToAssets }: DataSourcesModalProps) {
   const [sources, setSources] = useState<DataSource[]>([]);
   const [tablesBySource, setTablesBySource] = useState<Record<string, DataSourceTable[]>>({});
+  const [fileAssets, setFileAssets] = useState<FileAsset[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const loadSources = async () => {
+    console.log('[DataSourcesModal] Loading sources, projectId:', projectId);
     setLoading(true);
     setError(null);
+    
+    // Load file assets separately
+    if (projectId) {
+      try {
+        const files = await listFileAssets(projectId);
+        console.log('[DataSourcesModal] Loaded file assets:', files);
+        setFileAssets(files);
+      } catch (err) {
+        console.error('[DataSourcesModal] Failed to load file assets:', err);
+      }
+    }
+    
     try {
       const data = await fetchDataSources();
+      console.log('[DataSourcesModal] Loaded sources:', data);
       setSources(data);
       const details = await Promise.all(
         data.map(async source => {
@@ -68,7 +86,7 @@ export function DataSourcesModal({ open, onOpenChange, onImportClick, refreshTri
     if (open) {
       loadSources();
     }
-  }, [open, refreshTrigger]);
+  }, [open, refreshTrigger, projectId]);
 
   const handleDelete = async (sourceId: string) => {
     try {
@@ -120,6 +138,37 @@ export function DataSourcesModal({ open, onOpenChange, onImportClick, refreshTri
 
         <div className="flex-1 overflow-y-auto -mx-6 px-6">
           <div className="space-y-8 py-4">
+            {/* File Assets Banner - show if there are imported files */}
+            {fileAssets.length > 0 && (
+              <div className="flex items-center justify-between rounded-lg border border-primary/20 bg-primary/5 p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                    <FileSpreadsheet className="h-5 w-5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-foreground">
+                      {fileAssets.length} Imported File{fileAssets.length !== 1 ? 's' : ''}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      CSV/Parquet files are managed in Asset Library
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    onOpenChange(false);
+                    if (onNavigateToAssets) {
+                      onNavigateToAssets();
+                    }
+                  }}
+                  className="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                >
+                  View in Asset Library
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+
             {/* Connected Sources */}
             <section>
               <h2 className="mb-4 text-lg font-semibold">Connected Sources</h2>

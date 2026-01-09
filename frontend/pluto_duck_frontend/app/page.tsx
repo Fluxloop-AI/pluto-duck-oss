@@ -346,6 +346,15 @@ export default function WorkspacePage() {
           )}
         </button>
 
+        <button
+          onClick={() => setDataSourcesOpen(true)}
+          className="ml-2 flex h-7 items-center gap-1.5 rounded-md border border-muted-foreground/40 bg-white px-2.5 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground hover:border-muted-foreground/60"
+          title="Manage data sources"
+        >
+          <DatabaseIcon className="h-3.5 w-3.5" />
+          <span>Data Sources</span>
+        </button>
+
         <div
           data-tauri-drag-region
           className="flex h-full flex-1 select-none items-center justify-center gap-2"
@@ -466,14 +475,6 @@ export default function WorkspacePage() {
               <button
                 type="button"
                 className="flex w-full items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm hover:bg-accent transition"
-                onClick={() => setDataSourcesOpen(true)}
-              >
-                <DatabaseIcon className="h-4 w-4" />
-                <span>Data Sources</span>
-              </button>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm hover:bg-accent transition"
                 onClick={() => setSettingsOpen(true)}
               >
                 <SettingsIcon className="h-4 w-4" />
@@ -543,6 +544,7 @@ export default function WorkspacePage() {
         onOpenChange={setDataSourcesOpen}
         onImportClick={handleImportClick}
         refreshTrigger={dataSourcesRefresh}
+        onNavigateToAssets={() => setMainView('assets')}
       />
       <CreateBoardModal
         open={showCreateBoardModal}

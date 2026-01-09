@@ -60,6 +60,15 @@ export function ImportCSVModal({ projectId, open, onOpenChange, onImportSuccess 
     }
 
     setImporting(true);
+    console.log('[ImportCSVModal] Starting import with:', {
+      projectId,
+      file_path: filePath.trim(),
+      file_type: 'csv',
+      table_name: tableName.trim(),
+      name: name.trim(),
+      overwrite,
+    });
+    
     try {
       // Use File Asset API - goes directly to Asset Zone
       const asset = await importFile(projectId, {
@@ -71,6 +80,7 @@ export function ImportCSVModal({ projectId, open, onOpenChange, onImportSuccess 
         overwrite,
       });
       
+      console.log('[ImportCSVModal] Import successful:', asset);
       setSuccessMessage(`Successfully imported ${asset.row_count ?? 0} rows`);
       
       // Reset form
@@ -81,6 +91,7 @@ export function ImportCSVModal({ projectId, open, onOpenChange, onImportSuccess 
       
       // Notify parent and close
       if (onImportSuccess) {
+        console.log('[ImportCSVModal] Calling onImportSuccess callback');
         onImportSuccess();
       }
       
@@ -89,6 +100,7 @@ export function ImportCSVModal({ projectId, open, onOpenChange, onImportSuccess 
         setSuccessMessage(null);
       }, 1500);
     } catch (err) {
+      console.error('[ImportCSVModal] Import failed:', err);
       setError(err instanceof Error ? err.message : 'Failed to import CSV');
     } finally {
       setImporting(false);

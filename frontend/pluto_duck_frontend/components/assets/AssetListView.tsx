@@ -14,10 +14,12 @@ import {
   X,
   SortAsc,
   SortDesc,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { AssetCard } from './AssetCard';
+import { FileAssetCard } from './FileAssetCard';
 import { AssetDetailModal } from './AssetDetailModal';
 import { CreateAssetModal } from './CreateAssetModal';
 import { ExecutionPlanView } from './ExecutionPlanView';
@@ -33,6 +35,13 @@ import {
   type ExecutionPlan,
   type ExecutionResult,
 } from '@/lib/assetsApi';
+import {
+  listFileAssets,
+  deleteFileAsset,
+  refreshFileAsset,
+  previewFileData,
+  type FileAsset,
+} from '@/lib/fileAssetApi';
 
 interface AssetListViewProps {
   projectId: string;
@@ -43,13 +52,16 @@ type SortOption = 'name' | 'updated' | 'created';
 type SortDirection = 'asc' | 'desc';
 type FreshnessFilter = 'all' | 'fresh' | 'stale' | 'never';
 type MaterializationFilter = 'all' | 'view' | 'table' | 'append' | 'parquet';
+type AssetTab = 'analyses' | 'files';
 
 export function AssetListView({ projectId }: AssetListViewProps) {
   // State
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
+  const [fileAssets, setFileAssets] = useState<FileAsset[]>([]);
   const [freshnessMap, setFreshnessMap] = useState<Record<string, FreshnessStatus>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<AssetTab>('analyses');
 
   // UI State
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
@@ -69,16 +81,23 @@ export function AssetListView({ projectId }: AssetListViewProps) {
   const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
 
-  // Fetch analyses
+  // Fetch analyses and file assets
   const fetchAnalyses = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await listAnalyses({ projectId });
-      setAnalyses(data);
+      // Fetch both analyses and file assets in parallel
+      const [analysesData, fileAssetsData] = await Promise.all([
+        listAnalyses({ projectId }),
+        listFileAssets(projectId),
+      ]);
+      
+      setAnalyses(analysesData);
+      setFileAssets(fileAssetsData);
+      console.log('[AssetListView] Loaded file assets:', fileAssetsData);
 
       // Fetch freshness for all analyses
-      const freshnessPromises = data.map(async (a) => {
+      const freshnessPromises = analysesData.map(async (a) => {
         try {
           const freshness = await getFreshness(a.id, projectId);
           return [a.id, freshness] as const;
@@ -96,7 +115,7 @@ export function AssetListView({ projectId }: AssetListViewProps) {
       }
       setFreshnessMap(newFreshnessMap);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load analyses');
+      setError(err instanceof Error ? err.message : 'Failed to load assets');
     } finally {
       setIsLoading(false);
     }
@@ -284,16 +303,52 @@ export function AssetListView({ projectId }: AssetListViewProps) {
     );
   };
 
-  // Empty state
-  if (!isLoading && analyses.length === 0) {
+  // File Asset Handlers
+  const handleViewFileAsset = async (fileAsset: FileAsset) => {
+    try {
+      const preview = await previewFileData(projectId, fileAsset.id, 100);
+      console.log('[AssetListView] File preview:', preview);
+      // TODO: Open preview modal
+      alert(`Preview: ${preview.columns.join(', ')}\n\nFirst row: ${JSON.stringify(preview.rows[0])}\n\nTotal: ${preview.total_rows} rows`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to preview file');
+    }
+  };
+
+  const handleRefreshFileAsset = async (fileAsset: FileAsset) => {
+    if (!confirm(`Re-import "${fileAsset.name}" from ${fileAsset.file_path}?`)) {
+      return;
+    }
+    try {
+      const refreshed = await refreshFileAsset(projectId, fileAsset.id);
+      setFileAssets((prev) => prev.map((f) => (f.id === fileAsset.id ? refreshed : f)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to refresh file');
+    }
+  };
+
+  const handleDeleteFileAsset = async (fileAsset: FileAsset) => {
+    if (!confirm(`Delete "${fileAsset.name}"? This will also drop the table "${fileAsset.table_name}".`)) {
+      return;
+    }
+    try {
+      await deleteFileAsset(projectId, fileAsset.id);
+      setFileAssets((prev) => prev.filter((f) => f.id !== fileAsset.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete file');
+    }
+  };
+
+  // Empty state - only show if both are empty
+  if (!isLoading && analyses.length === 0 && fileAssets.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-8">
         <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 mb-4">
           <Package className="h-8 w-8 text-primary" />
         </div>
-        <h2 className="text-xl font-semibold text-foreground mb-2">No Saved Analyses</h2>
+        <h2 className="text-xl font-semibold text-foreground mb-2">No Assets Yet</h2>
         <p className="text-muted-foreground text-center max-w-md mb-6">
-          Save your SQL analyses to reuse them later, track changes, and build data pipelines.
+          Save your SQL analyses or import CSV/Parquet files to build your data library.
         </p>
         <Button onClick={() => setShowCreateModal(true)}>
           <Plus className="mr-2 h-4 w-4" />
@@ -312,6 +367,44 @@ export function AssetListView({ projectId }: AssetListViewProps) {
 
   return (
     <div className="flex h-full flex-col">
+      {/* Tabs */}
+      <div className="border-b border-border px-4">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setActiveTab('analyses')}
+            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'analyses'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Package className="h-4 w-4" />
+            Saved Analyses
+            {analyses.length > 0 && (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                {analyses.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('files')}
+            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'files'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Imported Files
+            {fileAssets.length > 0 && (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                {fileAssets.length}
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
+
       {/* Toolbar */}
       <div className="border-b border-border">
         <div className="flex items-center justify-between px-4 py-3">
@@ -320,7 +413,7 @@ export function AssetListView({ projectId }: AssetListViewProps) {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search name, ID, SQL..."
+                placeholder={activeTab === 'analyses' ? "Search name, ID, SQL..." : "Search files..."}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-72 pl-9 pr-8"
@@ -335,88 +428,96 @@ export function AssetListView({ projectId }: AssetListViewProps) {
               )}
             </div>
 
-            {/* Filter Toggle */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowFilters(!showFilters)}
-              className={hasActiveFilters ? 'border-primary text-primary' : ''}
-            >
-              <Filter className="mr-2 h-4 w-4" />
-              Filters
-              {hasActiveFilters && (
-                <span className="ml-1 rounded-full bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">
-                  {selectedTags.length + (materializationFilter !== 'all' ? 1 : 0) + (freshnessFilter !== 'all' ? 1 : 0)}
-                </span>
-              )}
-              <ChevronDown className={`ml-1 h-3 w-3 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
-            </Button>
-
-            {/* Sort */}
-            <div className="flex items-center gap-1 rounded-md border border-border">
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as SortOption)}
-                className="h-8 appearance-none bg-transparent px-2 text-sm outline-none"
+            {/* Filter Toggle - only for analyses */}
+            {activeTab === 'analyses' && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowFilters(!showFilters)}
+                className={hasActiveFilters ? 'border-primary text-primary' : ''}
               >
-                <option value="updated">Updated</option>
-                <option value="created">Created</option>
-                <option value="name">Name</option>
-              </select>
-              <button
-                onClick={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
-                className="p-1.5 hover:bg-muted rounded-r-md"
-              >
-                {sortDir === 'asc' ? (
-                  <SortAsc className="h-4 w-4" />
-                ) : (
-                  <SortDesc className="h-4 w-4" />
+                <Filter className="mr-2 h-4 w-4" />
+                Filters
+                {hasActiveFilters && (
+                  <span className="ml-1 rounded-full bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">
+                    {selectedTags.length + (materializationFilter !== 'all' ? 1 : 0) + (freshnessFilter !== 'all' ? 1 : 0)}
+                  </span>
                 )}
-              </button>
-            </div>
+                <ChevronDown className={`ml-1 h-3 w-3 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
+              </Button>
+            )}
+
+            {/* Sort - only for analyses */}
+            {activeTab === 'analyses' && (
+              <div className="flex items-center gap-1 rounded-md border border-border">
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as SortOption)}
+                  className="h-8 appearance-none bg-transparent px-2 text-sm outline-none"
+                >
+                  <option value="updated">Updated</option>
+                  <option value="created">Created</option>
+                  <option value="name">Name</option>
+                </select>
+                <button
+                  onClick={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
+                  className="p-1.5 hover:bg-muted rounded-r-md"
+                >
+                  {sortDir === 'asc' ? (
+                    <SortAsc className="h-4 w-4" />
+                  ) : (
+                    <SortDesc className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
-            {/* View Mode Toggle */}
-            <div className="flex rounded-md border border-border">
-              <button
-                onClick={() => setViewMode('grid')}
-                className={`p-2 ${viewMode === 'grid' ? 'bg-muted' : 'hover:bg-muted/50'}`}
-                title="Grid view"
-              >
-                <LayoutGrid className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => setViewMode('list')}
-                className={`p-2 ${viewMode === 'list' ? 'bg-muted' : 'hover:bg-muted/50'}`}
-                title="List view"
-              >
-                <List className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => setViewMode('graph')}
-                className={`p-2 ${viewMode === 'graph' ? 'bg-muted' : 'hover:bg-muted/50'}`}
-                title="Lineage graph"
-              >
-                <GitBranch className="h-4 w-4" />
-              </button>
-            </div>
+            {/* View Mode Toggle - only for analyses */}
+            {activeTab === 'analyses' && (
+              <div className="flex rounded-md border border-border">
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className={`p-2 ${viewMode === 'grid' ? 'bg-muted' : 'hover:bg-muted/50'}`}
+                  title="Grid view"
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={`p-2 ${viewMode === 'list' ? 'bg-muted' : 'hover:bg-muted/50'}`}
+                  title="List view"
+                >
+                  <List className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => setViewMode('graph')}
+                  className={`p-2 ${viewMode === 'graph' ? 'bg-muted' : 'hover:bg-muted/50'}`}
+                  title="Lineage graph"
+                >
+                  <GitBranch className="h-4 w-4" />
+                </button>
+              </div>
+            )}
 
             {/* Refresh */}
             <Button variant="outline" size="icon" onClick={fetchAnalyses} disabled={isLoading}>
               <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
             </Button>
 
-            {/* Create */}
-            <Button onClick={() => setShowCreateModal(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              New Analysis
-            </Button>
+            {/* Create - only for analyses */}
+            {activeTab === 'analyses' && (
+              <Button onClick={() => setShowCreateModal(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                New Analysis
+              </Button>
+            )}
           </div>
         </div>
 
-        {/* Filter Panel */}
-        {showFilters && (
+        {/* Filter Panel - only for analyses */}
+        {showFilters && activeTab === 'analyses' && (
           <div className="border-t border-border px-4 py-3 bg-muted/30">
             <div className="flex flex-wrap items-center gap-4">
               {/* Tags */}
@@ -501,69 +602,114 @@ export function AssetListView({ projectId }: AssetListViewProps) {
 
       {/* Content */}
       <div className={`flex-1 overflow-auto ${viewMode !== 'graph' ? 'p-4' : ''}`}>
-        {viewMode === 'graph' ? (
-          <LineageGraphView
-            projectId={projectId}
-            onSelectAnalysis={(id) => {
-              const analysis = analyses.find((a) => a.id === id);
-              if (analysis) {
-                handleView(analysis);
-              }
-            }}
-          />
-        ) : isLoading ? (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="h-40 animate-pulse rounded-lg border border-border bg-muted/50"
-              />
-            ))}
-          </div>
-        ) : filteredAnalyses.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12">
-            <Search className="h-12 w-12 text-muted-foreground mb-3" />
-            <p className="text-muted-foreground mb-1">No analyses match your filters</p>
-            <p className="text-sm text-muted-foreground mb-3">
-              {searchQuery
-                ? `No results for "${searchQuery}"`
-                : 'Try adjusting your filter settings'}
-            </p>
-            <button
-              onClick={clearFilters}
-              className="text-sm text-primary hover:underline"
-            >
-              Clear all filters
-            </button>
-          </div>
-        ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filteredAnalyses.map((analysis) => (
-              <AssetCard
-                key={analysis.id}
-                analysis={analysis}
-                freshness={freshnessMap[analysis.id] || null}
-                onView={handleView}
-                onRun={handleRun}
-                onDelete={handleDelete}
-                onViewLineage={handleViewLineage}
-              />
-            ))}
-          </div>
+        {activeTab === 'analyses' ? (
+          // Analyses Tab Content
+          viewMode === 'graph' ? (
+            <LineageGraphView
+              projectId={projectId}
+              onSelectAnalysis={(id) => {
+                const analysis = analyses.find((a) => a.id === id);
+                if (analysis) {
+                  handleView(analysis);
+                }
+              }}
+            />
+          ) : isLoading ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {[1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  className="h-40 animate-pulse rounded-lg border border-border bg-muted/50"
+                />
+              ))}
+            </div>
+          ) : filteredAnalyses.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Search className="h-12 w-12 text-muted-foreground mb-3" />
+              <p className="text-muted-foreground mb-1">No analyses match your filters</p>
+              <p className="text-sm text-muted-foreground mb-3">
+                {searchQuery
+                  ? `No results for "${searchQuery}"`
+                  : 'Try adjusting your filter settings'}
+              </p>
+              <button
+                onClick={clearFilters}
+                className="text-sm text-primary hover:underline"
+              >
+                Clear all filters
+              </button>
+            </div>
+          ) : viewMode === 'grid' ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {filteredAnalyses.map((analysis) => (
+                <AssetCard
+                  key={analysis.id}
+                  analysis={analysis}
+                  freshness={freshnessMap[analysis.id] || null}
+                  onView={handleView}
+                  onRun={handleRun}
+                  onDelete={handleDelete}
+                  onViewLineage={handleViewLineage}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filteredAnalyses.map((analysis) => (
+                <AssetCard
+                  key={analysis.id}
+                  analysis={analysis}
+                  freshness={freshnessMap[analysis.id] || null}
+                  onView={handleView}
+                  onRun={handleRun}
+                  onDelete={handleDelete}
+                  onViewLineage={handleViewLineage}
+                />
+              ))}
+            </div>
+          )
         ) : (
-          <div className="space-y-2">
-            {filteredAnalyses.map((analysis) => (
-              <AssetCard
-                key={analysis.id}
-                analysis={analysis}
-                freshness={freshnessMap[analysis.id] || null}
-                onView={handleView}
-                onRun={handleRun}
-                onDelete={handleDelete}
-                onViewLineage={handleViewLineage}
-              />
-            ))}
-          </div>
+          // Files Tab Content
+          isLoading ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {[1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  className="h-40 animate-pulse rounded-lg border border-border bg-muted/50"
+                />
+              ))}
+            </div>
+          ) : fileAssets.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <FileSpreadsheet className="h-12 w-12 text-muted-foreground mb-3" />
+              <p className="text-muted-foreground mb-1">No imported files yet</p>
+              <p className="text-sm text-muted-foreground mb-3">
+                Import CSV or Parquet files from the Data Sources menu
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {fileAssets
+                .filter((f) => {
+                  if (!searchQuery) return true;
+                  const query = searchQuery.toLowerCase();
+                  return (
+                    f.name.toLowerCase().includes(query) ||
+                    f.table_name.toLowerCase().includes(query) ||
+                    f.file_path.toLowerCase().includes(query)
+                  );
+                })
+                .map((fileAsset) => (
+                  <FileAssetCard
+                    key={fileAsset.id}
+                    fileAsset={fileAsset}
+                    onView={handleViewFileAsset}
+                    onRefresh={handleRefreshFileAsset}
+                    onDelete={handleDeleteFileAsset}
+                  />
+                ))}
+            </div>
+          )
         )}
       </div>
 
