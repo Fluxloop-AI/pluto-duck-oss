@@ -14,11 +14,23 @@ class DummyManager:
         self.latest_run: str | None = None
         self._runs: dict[str, dict] = {}
 
-    def start_run(self, question: str, *, model: str | None = None) -> tuple[str, str]:
+    def start_run(
+        self,
+        question: str,
+        *,
+        model: str | None = None,
+        metadata: dict | None = None,
+        **_kwargs,
+    ) -> tuple[str, str]:
         conversation_id = str(uuid4())
         run_id = str(uuid4())
         self.latest_run = run_id
-        self._runs[run_id] = {"question": question, "conversation_id": conversation_id, "model": model}
+        self._runs[run_id] = {
+            "question": question,
+            "conversation_id": conversation_id,
+            "model": model,
+            "metadata": metadata,
+        }
         return conversation_id, run_id
 
     def start_run_for_conversation(self, conversation_id: str, question: str, *, create_if_missing: bool = False) -> str:
@@ -38,21 +50,19 @@ class DummyManager:
         yield {"type": "run", "subtype": "end", "content": {"finished": True}}
 
 
-def make_client(manager: DummyManager) -> TestClient:
+@pytest.fixture
+def client(monkeypatch) -> TestClient:
     from fastapi import FastAPI
 
     app = FastAPI()
 
     from pluto_duck_backend.agent.core import orchestrator
 
-    orchestrator._AGENT_MANAGER = manager  # type: ignore[attr-defined]
+    # Ensure we don't leak the DummyManager into other test modules.
+    monkeypatch.setattr(orchestrator, "_AGENT_MANAGER", DummyManager(), raising=False)
+
     app.include_router(api_router)
     return TestClient(app)
-
-
-@pytest.fixture
-def client() -> TestClient:
-    return make_client(DummyManager())
 
 
 def test_start_agent_run(client: TestClient) -> None:

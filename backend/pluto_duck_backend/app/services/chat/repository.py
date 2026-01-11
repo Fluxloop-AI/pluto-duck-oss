@@ -459,7 +459,7 @@ class ChatRepository:
                     now,
                     now,
                     preview,
-                    conversation_id,
+                    None,
                     json.dumps(metadata or {}),
                 ],
             )

@@ -131,17 +131,19 @@ async def create_conversation(
       raise HTTPException(status_code=404, detail="Conversation not found") from exc
 
   if payload.question:
+    # Ensure model is reflected in persisted metadata (used by UI)
+    metadata = dict(payload.metadata or {})
+    if payload.model and "model" not in metadata:
+      metadata["model"] = payload.model
+
     conversation_id, run_id = manager.start_run(
       payload.question,
       model=payload.model,
-      metadata=payload.metadata,
+      metadata=metadata,
     )
     logger.info("chat_create_conversation new conversation_id=%s run_id=%s", conversation_id, run_id)
-    # Preserve existing metadata (especially project_id) and add model if not present
-    metadata = dict(payload.metadata or {})  # Create a copy to avoid mutation
-    if payload.model and "model" not in metadata:
-      metadata["model"] = payload.model
-    repo.create_conversation(conversation_id, payload.question, metadata)
+    # Defensive: ensure conversation row has the active run_id for subsequent reads
+    repo.set_active_run(conversation_id, run_id)
     return CreateConversationResponse(id=conversation_id, run_id=run_id, events_url=f"/api/v1/agent/{run_id}/events", conversation_id=conversation_id)
 
   conversation_id = payload.conversation_id or repo._generate_uuid()  # type: ignore[attr-defined]
