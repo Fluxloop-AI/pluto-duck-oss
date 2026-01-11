@@ -204,29 +204,30 @@ class FileAssetService:
         name: Optional[str] = None,
         description: Optional[str] = None,
         overwrite: bool = True,
+        mode: Literal["replace", "append", "merge"] = "replace",
+        target_table: Optional[str] = None,
+        merge_keys: Optional[List[str]] = None,
     ) -> FileAsset:
         """Import a file into DuckDB as a table.
 
         Args:
             file_path: Path to the source file
             file_type: Type of file ("csv" or "parquet")
-            table_name: Name for the DuckDB table
+            table_name: Name for the DuckDB table (used for new tables)
             name: Human-readable name (defaults to table_name)
             description: Optional description
-            overwrite: If True, drop existing table first
+            overwrite: If True, drop existing table first (only for replace mode)
+            mode: Import mode - "replace", "append", or "merge"
+            target_table: Existing table name for append/merge modes
+            merge_keys: Column names for merge key (required for merge mode)
 
         Returns:
-            Created FileAsset
+            Created/Updated FileAsset
 
         Raises:
             AssetValidationError: If validation fails
             AssetError: If import fails
         """
-        # Validate table name
-        safe_table = _to_identifier(table_name)
-        if not safe_table:
-            raise AssetValidationError("Invalid table name")
-
         # Validate file exists
         path = Path(file_path)
         if not path.exists():
@@ -235,45 +236,122 @@ class FileAssetService:
         # Get file size
         file_size_bytes = path.stat().st_size
 
-        # Generate ID
-        asset_id = _generate_id()
+        # Determine actual table name
+        if mode in ("append", "merge") and target_table:
+            safe_table = _to_identifier(target_table)
+        else:
+            safe_table = _to_identifier(table_name)
+        
+        if not safe_table:
+            raise AssetValidationError("Invalid table name")
+
+        # Validate merge mode has keys
+        if mode == "merge" and not merge_keys:
+            raise AssetValidationError("merge_keys required for merge mode")
+
+        # Build read expression
+        if file_type == "csv":
+            read_expr = f"read_csv('{file_path}', auto_detect=true)"
+        elif file_type == "parquet":
+            read_expr = f"read_parquet('{file_path}')"
+        else:
+            raise AssetValidationError(f"Unsupported file type: {file_type}")
 
         with self._get_connection() as conn:
-            # Drop existing table if overwrite
-            if overwrite:
-                conn.execute(f"DROP TABLE IF EXISTS {safe_table}")
-            else:
-                # Check if table exists
-                result = conn.execute(f"""
-                    SELECT COUNT(*) FROM information_schema.tables
-                    WHERE table_name = '{safe_table}'
-                """).fetchone()
-                if result and result[0] > 0:
-                    raise AssetValidationError(f"Table '{safe_table}' already exists")
-
-            # Create table from file
             try:
-                if file_type == "csv":
-                    conn.execute(f"""
-                        CREATE TABLE {safe_table} AS
-                        SELECT * FROM read_csv('{file_path}', auto_detect=true)
-                    """)
-                elif file_type == "parquet":
-                    conn.execute(f"""
-                        CREATE TABLE {safe_table} AS
-                        SELECT * FROM read_parquet('{file_path}')
-                    """)
-                else:
-                    raise AssetValidationError(f"Unsupported file type: {file_type}")
-            except duckdb.Error as e:
-                raise AssetError(f"Failed to import file: {e}")
+                if mode == "replace":
+                    # Replace mode: drop and recreate
+                    if overwrite:
+                        conn.execute(f"DROP TABLE IF EXISTS {safe_table}")
+                    else:
+                        result = conn.execute(f"""
+                            SELECT COUNT(*) FROM information_schema.tables
+                            WHERE table_name = '{safe_table}'
+                        """).fetchone()
+                        if result and result[0] > 0:
+                            raise AssetValidationError(f"Table '{safe_table}' already exists")
+                    
+                    conn.execute(f"CREATE TABLE {safe_table} AS SELECT * FROM {read_expr}")
+                    
+                elif mode == "append":
+                    # Append mode: insert into existing table
+                    # Check table exists
+                    result = conn.execute(f"""
+                        SELECT COUNT(*) FROM information_schema.tables
+                        WHERE table_name = '{safe_table}'
+                    """).fetchone()
+                    if not result or result[0] == 0:
+                        raise AssetValidationError(f"Target table '{safe_table}' not found for append")
+                    
+                    conn.execute(f"INSERT INTO {safe_table} SELECT * FROM {read_expr}")
+                    
+                elif mode == "merge":
+                    # Merge mode: UPSERT using merge keys
+                    result = conn.execute(f"""
+                        SELECT COUNT(*) FROM information_schema.tables
+                        WHERE table_name = '{safe_table}'
+                    """).fetchone()
+                    if not result or result[0] == 0:
+                        raise AssetValidationError(f"Target table '{safe_table}' not found for merge")
+                    
+                    # Get columns from existing table
+                    cols_result = conn.execute(f"DESCRIBE {safe_table}").fetchall()
+                    all_columns = [r[0] for r in cols_result]
+                    update_columns = [c for c in all_columns if c not in merge_keys]
+                    
+                    # Build merge SQL
+                    key_conditions = " AND ".join([f"target.{k} = source.{k}" for k in merge_keys])
+                    update_set = ", ".join([f"{c} = source.{c}" for c in update_columns])
+                    insert_cols = ", ".join(all_columns)
+                    insert_vals = ", ".join([f"source.{c}" for c in all_columns])
+                    
+                    merge_sql = f"""
+                        MERGE INTO {safe_table} AS target
+                        USING ({read_expr}) AS source
+                        ON {key_conditions}
+                        WHEN MATCHED THEN UPDATE SET {update_set}
+                        WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})
+                    """
+                    conn.execute(merge_sql)
 
-            # Get row and column count
+            except duckdb.Error as e:
+                raise AssetError(f"Failed to import file ({mode}): {e}")
+
+            # Get updated row and column count
             row_count = conn.execute(f"SELECT COUNT(*) FROM {safe_table}").fetchone()[0]
             column_count = len(conn.execute(f"DESCRIBE {safe_table}").fetchall())
 
-            # Save metadata
             now = datetime.now(UTC)
+
+            # For append/merge, find and update existing metadata
+            if mode in ("append", "merge") and target_table:
+                existing = conn.execute(f"""
+                    SELECT id FROM {self.METADATA_SCHEMA}.{self.METADATA_TABLE}
+                    WHERE table_name = ? AND project_id = ?
+                """, [safe_table, self.project_id]).fetchone()
+                
+                if existing:
+                    asset_id = existing[0]
+                    conn.execute(f"""
+                        UPDATE {self.METADATA_SCHEMA}.{self.METADATA_TABLE}
+                        SET row_count = ?, updated_at = ?
+                        WHERE id = ?
+                    """, [row_count, now, asset_id])
+                    
+                    # Return updated asset
+                    asset = self.get_file(asset_id)
+                    if asset:
+                        return asset
+            
+            # For replace mode or if no existing metadata, create new
+            asset_id = _generate_id()
+            
+            # Remove old metadata if exists (for replace mode)
+            conn.execute(f"""
+                DELETE FROM {self.METADATA_SCHEMA}.{self.METADATA_TABLE}
+                WHERE table_name = ? AND project_id = ?
+            """, [safe_table, self.project_id])
+            
             conn.execute(f"""
                 INSERT INTO {self.METADATA_SCHEMA}.{self.METADATA_TABLE}
                 (id, project_id, name, file_path, file_type, table_name, description,

@@ -492,6 +492,20 @@ def get_cached_table(
     )
 
 
+@router.get("/cache/{local_table}/preview")
+def preview_cached_table(
+    local_table: str,
+    project_id: str = Query(..., description="Project ID"),
+    limit: int = Query(100, ge=1, le=10000, description="Max rows to return"),
+) -> Dict[str, Any]:
+    """Preview data from a cached table."""
+    service = get_source_service(project_id)
+    try:
+        return service.preview_cached_table(local_table, limit=limit)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/cache/{local_table}/refresh", response_model=CachedTableResponse)
 def refresh_cache(
     local_table: str,

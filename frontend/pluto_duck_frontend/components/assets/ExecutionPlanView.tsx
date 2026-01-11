@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Play, CheckCircle, XCircle, SkipForward, Clock, ArrowDown, AlertTriangle } from 'lucide-react';
-import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import {
   type ExecutionPlan,
@@ -59,6 +59,14 @@ export function ExecutionPlanView({
   return (
     <Dialog open={open} onOpenChange={() => onCancel()}>
       <DialogContent className="max-w-xl">
+        {/* Screen reader accessible title */}
+        <DialogTitle className="sr-only">
+          {result ? 'Execution Result' : 'Execution Plan'}
+        </DialogTitle>
+        <DialogDescription className="sr-only">
+          {plan.steps.length} step execution plan
+        </DialogDescription>
+        
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-6 py-4 -mx-6 -mt-6">
           <div>

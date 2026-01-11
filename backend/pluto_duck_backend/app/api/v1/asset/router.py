@@ -634,10 +634,22 @@ class ImportFileRequest(BaseModel):
 
     file_path: str = Field(..., description="Path to the source file")
     file_type: Literal["csv", "parquet"] = Field(..., description="Type of file")
-    table_name: str = Field(..., description="Name for the DuckDB table")
+    table_name: str = Field(..., description="Name for the DuckDB table (for new tables)")
     name: Optional[str] = Field(None, description="Human-readable name")
     description: Optional[str] = Field(None, description="Description")
-    overwrite: bool = Field(True, description="Overwrite existing table")
+    overwrite: bool = Field(True, description="Overwrite existing table (replace mode only)")
+    mode: Literal["replace", "append", "merge"] = Field(
+        "replace", 
+        description="Import mode: replace (new table), append (add rows), merge (upsert)"
+    )
+    target_table: Optional[str] = Field(
+        None, 
+        description="Existing table name for append/merge modes"
+    )
+    merge_keys: Optional[List[str]] = Field(
+        None, 
+        description="Column names for merge key (required for merge mode)"
+    )
 
 
 class FileAssetResponse(BaseModel):
@@ -703,6 +715,11 @@ def import_file(
 
     This creates a table from the file and registers it as a File Asset.
     File Assets go directly to Asset Zone (no ATTACH, no TTL).
+    
+    Modes:
+    - replace: Create new table or overwrite existing
+    - append: Add rows to existing table
+    - merge: Upsert based on merge_keys
     """
     service = get_file_asset_service(project_id)
 
@@ -714,6 +731,9 @@ def import_file(
             name=request.name,
             description=request.description,
             overwrite=request.overwrite,
+            mode=request.mode,
+            target_table=request.target_table,
+            merge_keys=request.merge_keys,
         )
         return _file_asset_to_response(asset)
     except AssetValidationError as e:

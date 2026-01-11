@@ -429,22 +429,93 @@ class SourceService:
         self, name: str, config: Dict[str, Any], read_only_clause: str
     ) -> str:
         """Build ATTACH for Postgres using postgres_scanner extension."""
-        # DuckDB postgres_scanner connection string format
-        host = config.get("host", "localhost")
-        port = config.get("port", 5432)
-        database = config.get("database", "postgres")
-        user = config.get("user", "postgres")
-        password = config.get("password", "")
-        schema = config.get("schema", "public")
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Parse DSN if provided, otherwise use individual fields
+        dsn = config.get("dsn", "")
+        logger.info(f"[PostgresAttach] Config received: {list(config.keys())}, DSN present: {bool(dsn)}")
+        
+        if dsn:
+            # Parse DSN format: postgresql://user:password@host:port/database
+            parsed = self._parse_postgres_dsn(dsn)
+            logger.info(f"[PostgresAttach] Parsed DSN result: host={parsed.get('host')}, port={parsed.get('port')}, db={parsed.get('database')}, user={parsed.get('user')}")
+            host = parsed.get("host", "localhost")
+            port = parsed.get("port", 5432)
+            database = parsed.get("database", "postgres")
+            user = parsed.get("user", "postgres")
+            password = parsed.get("password", "")
+            schema = config.get("schema", parsed.get("schema", "public"))
+        else:
+            host = config.get("host", "localhost")
+            port = config.get("port", 5432)
+            database = config.get("database", "postgres")
+            user = config.get("user", "postgres")
+            password = config.get("password", "")
+            schema = config.get("schema", "public")
 
         # Connection string format for postgres_scanner
         conn_str = f"host={host} port={port} dbname={database} user={user} password={password}"
+        logger.info(f"[PostgresAttach] Final connection: host={host}, port={port}, db={database}, user={user}")
 
         return f"""
             INSTALL postgres;
             LOAD postgres;
             ATTACH '{conn_str}' AS {_quote_identifier(name)} (TYPE POSTGRES, SCHEMA '{schema}' {', ' + read_only_clause if read_only_clause else ''})
         """
+
+    def _parse_postgres_dsn(self, dsn: str) -> Dict[str, Any]:
+        """Parse PostgreSQL DSN into individual components.
+        
+        Supports formats:
+        - postgresql://user:password@host:port/database
+        - postgres://user:password@host:port/database
+        - postgresql://user:password@host:port/database?schema=myschema
+        """
+        from urllib.parse import urlparse, parse_qs, unquote
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        result: Dict[str, Any] = {}
+        
+        # Check if DSN looks valid
+        if not dsn or not (dsn.startswith("postgres://") or dsn.startswith("postgresql://")):
+            logger.warning(f"[DSN Parse] Invalid DSN format, doesn't start with postgres:// or postgresql://")
+            return result
+        
+        try:
+            # Handle both postgresql:// and postgres://
+            normalized_dsn = dsn
+            if dsn.startswith("postgres://"):
+                normalized_dsn = dsn.replace("postgres://", "postgresql://", 1)
+            
+            logger.info(f"[DSN Parse] Parsing: {normalized_dsn[:50]}...")
+            parsed = urlparse(normalized_dsn)
+            logger.info(f"[DSN Parse] urlparse result: scheme={parsed.scheme}, netloc={parsed.netloc}, hostname={parsed.hostname}, port={parsed.port}")
+            
+            if parsed.hostname:
+                result["host"] = parsed.hostname
+            if parsed.port:
+                result["port"] = parsed.port
+            if parsed.username:
+                result["user"] = unquote(parsed.username)  # URL decode
+            if parsed.password:
+                result["password"] = unquote(parsed.password)  # URL decode
+            if parsed.path and parsed.path != "/":
+                result["database"] = parsed.path.lstrip("/")
+            
+            # Parse query parameters (e.g., ?schema=public)
+            if parsed.query:
+                params = parse_qs(parsed.query)
+                if "schema" in params:
+                    result["schema"] = params["schema"][0]
+            
+            logger.info(f"[DSN Parse] Parsed successfully: host={result.get('host')}, port={result.get('port')}, db={result.get('database')}")
+                    
+        except Exception as e:
+            logger.error(f"[DSN Parse] Failed to parse DSN: {e}")
+            
+        return result
 
     def _build_sqlite_attach(
         self, name: str, config: Dict[str, Any], read_only_clause: str
@@ -639,15 +710,49 @@ class SourceService:
         Returns:
             List of tables with their access mode (live/cached)
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         source = self.get_source(source_name)
         if not source:
             raise SourceNotFoundError(source_name)
 
         # Use connection with source attached
         with self._connect_with_sources([source_name]) as con:
-            # Get tables from the attached database
+            rows = []
+            
+            # Try multiple methods to get tables
+            # Method 1: Use duckdb_tables() function (works for most attached DBs)
             try:
-                rows = con.execute(
+                result = con.execute(
+                    f"""
+                    SELECT schema_name, table_name
+                    FROM duckdb_tables()
+                    WHERE database_name = ?
+                    ORDER BY schema_name, table_name
+                    """,
+                    [source_name],
+                ).fetchall()
+                logger.info(f"[ListTables] duckdb_tables() returned {len(result)} tables for {source_name}")
+                if result:
+                    rows = result
+            except duckdb.Error as e:
+                logger.warning(f"[ListTables] duckdb_tables() failed: {e}")
+            
+            # Method 2: Try SHOW TABLES if method 1 didn't work
+            if not rows:
+                try:
+                    result = con.execute(f"SHOW TABLES FROM {_quote_identifier(source_name)}").fetchall()
+                    logger.info(f"[ListTables] SHOW TABLES returned {len(result)} tables")
+                    # SHOW TABLES returns (name,) tuples
+                    rows = [("public", row[0]) for row in result]
+                except duckdb.Error as e:
+                    logger.warning(f"[ListTables] SHOW TABLES failed: {e}")
+            
+            # Method 3: Fallback to information_schema
+            if not rows:
+                try:
+                    result = con.execute(
                     f"""
                     SELECT table_schema, table_name
                     FROM information_schema.tables
@@ -656,9 +761,10 @@ class SourceService:
                     """,
                     [source_name],
                 ).fetchall()
-            except duckdb.Error:
-                # Fallback: some attached DBs don't populate information_schema properly
-                rows = []
+                    logger.info(f"[ListTables] information_schema returned {len(result)} tables")
+                    rows = result
+                except duckdb.Error as e:
+                    logger.warning(f"[ListTables] information_schema failed: {e}")
 
             # Get cached tables for this source
             cached = con.execute(
@@ -1031,6 +1137,36 @@ class SourceService:
             return f"약 {row_count:,}건이에요. 날짜 필터와 함께 캐시하는 걸 추천해요."
         else:
             return f"약 {row_count:,}건으로 큰 테이블이에요. 필요한 기간만 필터해서 캐시하세요."
+
+    def preview_cached_table(
+        self, local_table: str, limit: int = 100
+    ) -> Dict[str, Any]:
+        """Preview data from a cached table.
+
+        Args:
+            local_table: The local cache table name
+            limit: Maximum rows to return
+
+        Returns:
+            Dict with columns, rows, and total_rows
+        """
+        with self._connect() as con:
+            # Get data
+            cache_ref = f"cache.{_quote_identifier(local_table)}"
+            result = con.execute(f"SELECT * FROM {cache_ref} LIMIT {limit}").fetchall()
+            columns = [desc[0] for desc in con.description]
+            
+            # Get total count
+            total_rows = con.execute(f"SELECT COUNT(*) FROM {cache_ref}").fetchone()[0]
+            
+            # Convert rows to list of lists for JSON serialization
+            rows = [list(row) for row in result]
+            
+            return {
+                "columns": columns,
+                "rows": rows,
+                "total_rows": total_rows,
+            }
 
 
 @lru_cache(maxsize=32)

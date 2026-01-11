@@ -27,6 +27,8 @@ export interface FileAsset {
   updated_at: string | null;
 }
 
+export type ImportMode = 'replace' | 'append' | 'merge';
+
 export interface ImportFileRequest {
   file_path: string;
   file_type: FileType;
@@ -34,6 +36,9 @@ export interface ImportFileRequest {
   name?: string;
   description?: string;
   overwrite?: boolean;
+  mode?: ImportMode;
+  target_table?: string;
+  merge_keys?: string[];
 }
 
 export interface FileSchema {

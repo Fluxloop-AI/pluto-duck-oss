@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { FileSpreadsheet, FileArchive, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
-import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { previewFileData, type FileAsset } from '@/lib/fileAssetApi';
 
@@ -61,6 +61,12 @@ export function FilePreviewModal({
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-6xl h-[85vh] flex flex-col p-0 gap-0">
+        {/* Screen reader accessible title */}
+        <DialogTitle className="sr-only">{fileAsset.name} Preview</DialogTitle>
+        <DialogDescription className="sr-only">
+          Preview data from {fileAsset.table_name}
+        </DialogDescription>
+        
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <div className="flex items-center gap-3">

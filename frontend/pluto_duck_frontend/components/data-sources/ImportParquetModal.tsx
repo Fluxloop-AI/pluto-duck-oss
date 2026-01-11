@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { FolderOpenIcon } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { FolderOpenIcon, Plus, Layers } from 'lucide-react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import {
   Dialog,
@@ -13,69 +13,120 @@ import {
 } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
-import { importFile } from '../../lib/fileAssetApi';
+import { importFile, listFileAssets, type FileAsset, type ImportMode } from '../../lib/fileAssetApi';
 
 interface ImportParquetModalProps {
   projectId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImportSuccess?: () => void;
+  preselectedTable?: string;
 }
 
-export function ImportParquetModal({ projectId, open, onOpenChange, onImportSuccess }: ImportParquetModalProps) {
+export function ImportParquetModal({ 
+  projectId, 
+  open, 
+  onOpenChange, 
+  onImportSuccess,
+  preselectedTable,
+}: ImportParquetModalProps) {
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   
+  // Form state
   const [name, setName] = useState('');
   const [filePath, setFilePath] = useState('');
   const [tableName, setTableName] = useState('');
   const [description, setDescription] = useState('');
-  const [overwrite, setOverwrite] = useState(true);
+  
+  // Mode state
+  const [importType, setImportType] = useState<'new' | 'existing'>('new');
+  const [mode, setMode] = useState<ImportMode>('replace');
+  const [targetTable, setTargetTable] = useState('');
+  const [mergeKeys, setMergeKeys] = useState('');
+  
+  // Existing tables
+  const [existingTables, setExistingTables] = useState<FileAsset[]>([]);
+  const [loadingTables, setLoadingTables] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      loadExistingTables();
+      
+      if (preselectedTable) {
+        setImportType('existing');
+        setTargetTable(preselectedTable);
+        setMode('append');
+      }
+    }
+  }, [open, preselectedTable]);
+
+  const loadExistingTables = async () => {
+    setLoadingTables(true);
+    try {
+      const tables = await listFileAssets(projectId);
+      setExistingTables(tables);
+    } catch (err) {
+      console.error('Failed to load existing tables:', err);
+    } finally {
+      setLoadingTables(false);
+    }
+  };
 
   const handleImport = async () => {
     setError(null);
     setSuccessMessage(null);
-    
-    // Validation
-    if (!name.trim()) {
-      setError('Display name is required');
-      return;
-    }
     
     if (!filePath.trim()) {
       setError('File path is required');
       return;
     }
     
+    if (importType === 'new') {
+      if (!name.trim()) {
+        setError('Display name is required');
+        return;
+      }
     if (!tableName.trim()) {
       setError('Table name is required');
       return;
     }
-    
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
       setError('Table name must start with a letter or underscore and contain only letters, numbers, and underscores');
       return;
+      }
+    } else {
+      if (!targetTable) {
+        setError('Please select a target table');
+        return;
+      }
+      if (mode === 'merge' && !mergeKeys.trim()) {
+        setError('Merge keys are required for merge mode');
+        return;
+      }
     }
 
     setImporting(true);
+    
     try {
-      // Use File Asset API - goes directly to Asset Zone
-      const asset = await importFile(projectId, {
+      const request = {
         file_path: filePath.trim(),
-        file_type: 'parquet',
-        table_name: tableName.trim(),
-        name: name.trim(),
-        description: description.trim() || undefined,
-        overwrite,
-      });
+        file_type: 'parquet' as const,
+        table_name: importType === 'new' ? tableName.trim() : targetTable,
+        name: importType === 'new' ? name.trim() : undefined,
+        description: importType === 'new' ? description.trim() || undefined : undefined,
+        mode: importType === 'new' ? 'replace' as const : mode,
+        target_table: importType === 'existing' ? targetTable : undefined,
+        merge_keys: mode === 'merge' ? mergeKeys.split(',').map(k => k.trim()).filter(Boolean) : undefined,
+      };
+
+      const asset = await importFile(projectId, request);
       
-      setSuccessMessage(`Successfully imported ${asset.row_count ?? 0} rows`);
+      const modeLabel = importType === 'new' ? 'imported' : mode === 'append' ? 'appended' : 'merged';
+      setSuccessMessage(`Successfully ${modeLabel} ${asset.row_count ?? 0} rows`);
       
-      setName('');
-      setFilePath('');
-      setTableName('');
-      setDescription('');
+      resetForm();
       
       if (onImportSuccess) {
         onImportSuccess();
@@ -92,15 +143,26 @@ export function ImportParquetModal({ projectId, open, onOpenChange, onImportSucc
     }
   };
 
+  const resetForm = () => {
+    setName('');
+    setFilePath('');
+    setTableName('');
+    setDescription('');
+    setImportType('new');
+    setMode('replace');
+    setTargetTable('');
+    setMergeKeys('');
+  };
+
   const handleCancel = () => {
     setError(null);
     setSuccessMessage(null);
+    resetForm();
     onOpenChange(false);
   };
 
   const handleNameChange = (value: string) => {
     setName(value);
-    // Always auto-generate table name with prefix from display name
     const prefix = value
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '_')
@@ -128,27 +190,47 @@ export function ImportParquetModal({ projectId, open, onOpenChange, onImportSucc
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[550px]">
         <DialogHeader>
           <DialogTitle>Import Parquet File</DialogTitle>
           <DialogDescription>
-            Import data from a Parquet file into DuckDB
+            Create a new table or add data to an existing table
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4 py-4">
+          {/* Import Type Selection */}
           <div className="grid gap-2">
-            <label htmlFor="name" className="text-sm font-medium">
-              Display Name *
-            </label>
-            <Input
-              id="name"
-              placeholder="Sales Data"
-              value={name}
-              onChange={(e) => handleNameChange(e.target.value)}
-            />
+            <label className="text-sm font-medium">Import Type</label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setImportType('new')}
+                className={`flex-1 flex items-center justify-center gap-2 rounded-lg border-2 p-3 text-sm font-medium transition-colors ${
+                  importType === 'new'
+                    ? 'border-primary bg-primary/5 text-primary'
+                    : 'border-border hover:border-muted-foreground/50'
+                }`}
+              >
+                <Plus className="h-4 w-4" />
+                Create new table
+              </button>
+              <button
+                type="button"
+                onClick={() => setImportType('existing')}
+                className={`flex-1 flex items-center justify-center gap-2 rounded-lg border-2 p-3 text-sm font-medium transition-colors ${
+                  importType === 'existing'
+                    ? 'border-primary bg-primary/5 text-primary'
+                    : 'border-border hover:border-muted-foreground/50'
+                }`}
+              >
+                <Layers className="h-4 w-4" />
+                Add to existing table
+              </button>
+            </div>
           </div>
 
+          {/* File Path */}
           <div className="grid gap-2">
             <label htmlFor="file-path" className="text-sm font-medium">
               File Path *
@@ -171,14 +253,25 @@ export function ImportParquetModal({ projectId, open, onOpenChange, onImportSucc
                 <FolderOpenIcon className="h-4 w-4" />
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Full path to the Parquet file
-            </p>
+          </div>
+
+          {importType === 'new' ? (
+            <>
+              <div className="grid gap-2">
+                <label htmlFor="name" className="text-sm font-medium">
+                  Display Name *
+                </label>
+                <Input
+                  id="name"
+                  placeholder="Sales Data"
+                  value={name}
+                  onChange={(e) => handleNameChange(e.target.value)}
+                />
           </div>
 
           <div className="grid gap-2">
             <label htmlFor="table-name" className="text-sm font-medium">
-              Table Name (in DuckDB) *
+                  Table Name *
             </label>
             <Input
               id="table-name"
@@ -186,6 +279,9 @@ export function ImportParquetModal({ projectId, open, onOpenChange, onImportSucc
               value={tableName}
               onChange={(e) => setTableName(e.target.value)}
             />
+                <p className="text-xs text-muted-foreground">
+                  Name for the DuckDB table
+                </p>
           </div>
 
           <div className="grid gap-2">
@@ -199,19 +295,94 @@ export function ImportParquetModal({ projectId, open, onOpenChange, onImportSucc
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
-
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="overwrite"
-              checked={overwrite}
-              onChange={(e) => setOverwrite(e.target.checked)}
-              className="h-4 w-4"
-            />
-            <label htmlFor="overwrite" className="text-sm">
-              Overwrite if table exists
+            </>
+          ) : (
+            <>
+              <div className="grid gap-2">
+                <label htmlFor="target-table" className="text-sm font-medium">
+                  Target Table *
             </label>
+                <select
+                  id="target-table"
+                  value={targetTable}
+                  onChange={(e) => setTargetTable(e.target.value)}
+                  className="h-10 rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                >
+                  <option value="">Select a table...</option>
+                  {existingTables.map((table) => (
+                    <option key={table.id} value={table.table_name}>
+                      {table.name} ({table.table_name}) - {table.row_count?.toLocaleString()} rows
+                    </option>
+                  ))}
+                </select>
+                {loadingTables && (
+                  <p className="text-xs text-muted-foreground">Loading tables...</p>
+                )}
+                {!loadingTables && existingTables.length === 0 && (
+                  <p className="text-xs text-muted-foreground">No existing tables found. Create a new table first.</p>
+                )}
+              </div>
+
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">Mode</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setMode('append')}
+                    className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                      mode === 'append'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border hover:bg-muted'
+                    }`}
+                  >
+                    Append
+                    <span className="block text-xs font-normal text-muted-foreground">Add rows</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode('merge')}
+                    className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                      mode === 'merge'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border hover:bg-muted'
+                    }`}
+                  >
+                    Merge
+                    <span className="block text-xs font-normal text-muted-foreground">Upsert by key</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode('replace')}
+                    className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                      mode === 'replace'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border hover:bg-muted'
+                    }`}
+                  >
+                    Replace
+                    <span className="block text-xs font-normal text-muted-foreground">Overwrite all</span>
+                  </button>
+                </div>
           </div>
+
+              {mode === 'merge' && (
+                <div className="grid gap-2">
+                  <label htmlFor="merge-keys" className="text-sm font-medium">
+                    Merge Keys *
+                  </label>
+                  <Input
+                    id="merge-keys"
+                    placeholder="id, email"
+                    value={mergeKeys}
+                    onChange={(e) => setMergeKeys(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Column names separated by commas. Rows with matching keys will be updated.
+                  </p>
+                </div>
+              )}
+            </>
+          )}
 
           {error && (
             <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
@@ -231,11 +402,10 @@ export function ImportParquetModal({ projectId, open, onOpenChange, onImportSucc
             Cancel
           </Button>
           <Button onClick={handleImport} disabled={importing}>
-            {importing ? 'Importing...' : 'Import'}
+            {importing ? 'Importing...' : importType === 'new' ? 'Create Table' : `${mode.charAt(0).toUpperCase() + mode.slice(1)} Data`}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
-

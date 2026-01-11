@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { FolderOpenIcon } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { FolderOpenIcon, Plus, Layers } from 'lucide-react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import {
   Dialog,
@@ -13,85 +13,128 @@ import {
 } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
-import { importFile } from '../../lib/fileAssetApi';
+import { importFile, listFileAssets, type FileAsset, type ImportMode } from '../../lib/fileAssetApi';
 
 interface ImportCSVModalProps {
   projectId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImportSuccess?: () => void;
+  preselectedTable?: string; // For "Add Data" from TableCard
 }
 
-export function ImportCSVModal({ projectId, open, onOpenChange, onImportSuccess }: ImportCSVModalProps) {
+export function ImportCSVModal({ 
+  projectId, 
+  open, 
+  onOpenChange, 
+  onImportSuccess,
+  preselectedTable,
+}: ImportCSVModalProps) {
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   
+  // Form state
   const [name, setName] = useState('');
   const [filePath, setFilePath] = useState('');
   const [tableName, setTableName] = useState('');
   const [description, setDescription] = useState('');
-  const [overwrite, setOverwrite] = useState(true);
+  
+  // Mode state
+  const [importType, setImportType] = useState<'new' | 'existing'>('new');
+  const [mode, setMode] = useState<ImportMode>('replace');
+  const [targetTable, setTargetTable] = useState('');
+  const [mergeKeys, setMergeKeys] = useState('');
+  
+  // Existing tables
+  const [existingTables, setExistingTables] = useState<FileAsset[]>([]);
+  const [loadingTables, setLoadingTables] = useState(false);
+
+  // Load existing tables when modal opens
+  useEffect(() => {
+    if (open) {
+      loadExistingTables();
+      
+      // If preselected table, set up for append mode
+      if (preselectedTable) {
+        setImportType('existing');
+        setTargetTable(preselectedTable);
+        setMode('append');
+      }
+    }
+  }, [open, preselectedTable]);
+
+  const loadExistingTables = async () => {
+    setLoadingTables(true);
+    try {
+      const tables = await listFileAssets(projectId);
+      setExistingTables(tables);
+    } catch (err) {
+      console.error('Failed to load existing tables:', err);
+    } finally {
+      setLoadingTables(false);
+    }
+  };
 
   const handleImport = async () => {
     setError(null);
     setSuccessMessage(null);
     
     // Validation
-    if (!name.trim()) {
-      setError('Display name is required');
-      return;
-    }
-    
     if (!filePath.trim()) {
       setError('File path is required');
       return;
     }
     
+    if (importType === 'new') {
+      if (!name.trim()) {
+        setError('Display name is required');
+        return;
+      }
     if (!tableName.trim()) {
       setError('Table name is required');
       return;
     }
-    
-    // Validate table name (alphanumeric and underscore only)
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
       setError('Table name must start with a letter or underscore and contain only letters, numbers, and underscores');
       return;
+      }
+    } else {
+      if (!targetTable) {
+        setError('Please select a target table');
+        return;
+      }
+      if (mode === 'merge' && !mergeKeys.trim()) {
+        setError('Merge keys are required for merge mode');
+        return;
+      }
     }
 
     setImporting(true);
-    console.log('[ImportCSVModal] Starting import with:', {
-      projectId,
-      file_path: filePath.trim(),
-      file_type: 'csv',
-      table_name: tableName.trim(),
-      name: name.trim(),
-      overwrite,
-    });
     
     try {
-      // Use File Asset API - goes directly to Asset Zone
-      const asset = await importFile(projectId, {
+      const request = {
         file_path: filePath.trim(),
-        file_type: 'csv',
-        table_name: tableName.trim(),
-        name: name.trim(),
-        description: description.trim() || undefined,
-        overwrite,
-      });
+        file_type: 'csv' as const,
+        table_name: importType === 'new' ? tableName.trim() : targetTable,
+        name: importType === 'new' ? name.trim() : undefined,
+        description: importType === 'new' ? description.trim() || undefined : undefined,
+        mode: importType === 'new' ? 'replace' as const : mode,
+        target_table: importType === 'existing' ? targetTable : undefined,
+        merge_keys: mode === 'merge' ? mergeKeys.split(',').map(k => k.trim()).filter(Boolean) : undefined,
+      };
       
-      console.log('[ImportCSVModal] Import successful:', asset);
-      setSuccessMessage(`Successfully imported ${asset.row_count ?? 0} rows`);
+      console.log('[ImportCSVModal] Importing with:', request);
+      const asset = await importFile(projectId, request);
+      
+      const modeLabel = importType === 'new' ? 'imported' : mode === 'append' ? 'appended' : 'merged';
+      setSuccessMessage(`Successfully ${modeLabel} ${asset.row_count ?? 0} rows`);
       
       // Reset form
-      setName('');
-      setFilePath('');
-      setTableName('');
-      setDescription('');
+      resetForm();
       
       // Notify parent and close
       if (onImportSuccess) {
-        console.log('[ImportCSVModal] Calling onImportSuccess callback');
         onImportSuccess();
       }
       
@@ -107,16 +150,26 @@ export function ImportCSVModal({ projectId, open, onOpenChange, onImportSuccess 
     }
   };
 
+  const resetForm = () => {
+    setName('');
+    setFilePath('');
+    setTableName('');
+    setDescription('');
+    setImportType('new');
+    setMode('replace');
+    setTargetTable('');
+    setMergeKeys('');
+  };
+
   const handleCancel = () => {
     setError(null);
     setSuccessMessage(null);
+    resetForm();
     onOpenChange(false);
   };
 
-  // Auto-suggest table name from display name
   const handleNameChange = (value: string) => {
     setName(value);
-    // Always auto-generate table name with prefix from display name
     const prefix = value
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '_')
@@ -144,29 +197,47 @@ export function ImportCSVModal({ projectId, open, onOpenChange, onImportSuccess 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[550px]">
         <DialogHeader>
           <DialogTitle>Import CSV File</DialogTitle>
           <DialogDescription>
-            Import data from a CSV file into DuckDB
+            Create a new table or add data to an existing table
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4 py-4">
-          {/* Display Name */}
+          {/* Import Type Selection */}
           <div className="grid gap-2">
-            <label htmlFor="name" className="text-sm font-medium">
-              Display Name *
-            </label>
-            <Input
-              id="name"
-              placeholder="Customer Data"
-              value={name}
-              onChange={(e) => handleNameChange(e.target.value)}
-            />
+            <label className="text-sm font-medium">Import Type</label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setImportType('new')}
+                className={`flex-1 flex items-center justify-center gap-2 rounded-lg border-2 p-3 text-sm font-medium transition-colors ${
+                  importType === 'new'
+                    ? 'border-primary bg-primary/5 text-primary'
+                    : 'border-border hover:border-muted-foreground/50'
+                }`}
+              >
+                <Plus className="h-4 w-4" />
+                Create new table
+              </button>
+              <button
+                type="button"
+                onClick={() => setImportType('existing')}
+                className={`flex-1 flex items-center justify-center gap-2 rounded-lg border-2 p-3 text-sm font-medium transition-colors ${
+                  importType === 'existing'
+                    ? 'border-primary bg-primary/5 text-primary'
+                    : 'border-border hover:border-muted-foreground/50'
+                }`}
+              >
+                <Layers className="h-4 w-4" />
+                Add to existing table
+              </button>
+            </div>
           </div>
 
-          {/* File Path */}
+          {/* File Path - Always shown */}
           <div className="grid gap-2">
             <label htmlFor="file-path" className="text-sm font-medium">
               File Path *
@@ -189,15 +260,27 @@ export function ImportCSVModal({ projectId, open, onOpenChange, onImportSuccess 
                 <FolderOpenIcon className="h-4 w-4" />
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Full path to the CSV file
-            </p>
+          </div>
+
+          {importType === 'new' ? (
+            <>
+              {/* Display Name */}
+              <div className="grid gap-2">
+                <label htmlFor="name" className="text-sm font-medium">
+                  Display Name *
+                </label>
+                <Input
+                  id="name"
+                  placeholder="Customer Data"
+                  value={name}
+                  onChange={(e) => handleNameChange(e.target.value)}
+                />
           </div>
 
           {/* Table Name */}
           <div className="grid gap-2">
             <label htmlFor="table-name" className="text-sm font-medium">
-              Table Name (in DuckDB) *
+                  Table Name *
             </label>
             <Input
               id="table-name"
@@ -222,20 +305,97 @@ export function ImportCSVModal({ projectId, open, onOpenChange, onImportSuccess 
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
-
-          {/* Overwrite checkbox */}
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="overwrite"
-              checked={overwrite}
-              onChange={(e) => setOverwrite(e.target.checked)}
-              className="h-4 w-4"
-            />
-            <label htmlFor="overwrite" className="text-sm">
-              Overwrite if table exists
+            </>
+          ) : (
+            <>
+              {/* Target Table Selection */}
+              <div className="grid gap-2">
+                <label htmlFor="target-table" className="text-sm font-medium">
+                  Target Table *
             </label>
+                <select
+                  id="target-table"
+                  value={targetTable}
+                  onChange={(e) => setTargetTable(e.target.value)}
+                  className="h-10 rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                >
+                  <option value="">Select a table...</option>
+                  {existingTables.map((table) => (
+                    <option key={table.id} value={table.table_name}>
+                      {table.name} ({table.table_name}) - {table.row_count?.toLocaleString()} rows
+                    </option>
+                  ))}
+                </select>
+                {loadingTables && (
+                  <p className="text-xs text-muted-foreground">Loading tables...</p>
+                )}
+                {!loadingTables && existingTables.length === 0 && (
+                  <p className="text-xs text-muted-foreground">No existing tables found. Create a new table first.</p>
+                )}
+              </div>
+
+              {/* Mode Selection */}
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">Mode</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setMode('append')}
+                    className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                      mode === 'append'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border hover:bg-muted'
+                    }`}
+                  >
+                    Append
+                    <span className="block text-xs font-normal text-muted-foreground">Add rows</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode('merge')}
+                    className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                      mode === 'merge'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border hover:bg-muted'
+                    }`}
+                  >
+                    Merge
+                    <span className="block text-xs font-normal text-muted-foreground">Upsert by key</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode('replace')}
+                    className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                      mode === 'replace'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border hover:bg-muted'
+                    }`}
+                  >
+                    Replace
+                    <span className="block text-xs font-normal text-muted-foreground">Overwrite all</span>
+                  </button>
+                </div>
           </div>
+
+              {/* Merge Keys - Only for merge mode */}
+              {mode === 'merge' && (
+                <div className="grid gap-2">
+                  <label htmlFor="merge-keys" className="text-sm font-medium">
+                    Merge Keys *
+                  </label>
+                  <Input
+                    id="merge-keys"
+                    placeholder="id, email"
+                    value={mergeKeys}
+                    onChange={(e) => setMergeKeys(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Column names separated by commas. Rows with matching keys will be updated.
+                  </p>
+                </div>
+              )}
+            </>
+          )}
 
           {/* Error Message */}
           {error && (
@@ -257,11 +417,10 @@ export function ImportCSVModal({ projectId, open, onOpenChange, onImportSuccess 
             Cancel
           </Button>
           <Button onClick={handleImport} disabled={importing}>
-            {importing ? 'Importing...' : 'Import'}
+            {importing ? 'Importing...' : importType === 'new' ? 'Create Table' : `${mode.charAt(0).toUpperCase() + mode.slice(1)} Data`}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
-

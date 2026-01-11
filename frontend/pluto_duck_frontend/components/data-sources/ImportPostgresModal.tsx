@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -11,7 +12,8 @@ import {
 } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
-import { createDataSource, importTablesBulk, testConnection, type DataSource } from '../../lib/dataSourcesApi';
+import { createDataSource, importTablesBulk, type DataSource } from '../../lib/dataSourcesApi';
+import { fetchSourceTables } from '../../lib/sourceApi';
 
 interface ImportPostgresModalProps {
   projectId: string;
@@ -34,6 +36,7 @@ export function ImportPostgresModal({ projectId, open, onOpenChange, onImportSuc
   const [name, setName] = useState('');
   const [dsn, setDsn] = useState('');
   const [description, setDescription] = useState('');
+  const [showDsn, setShowDsn] = useState(false);
   
   // Step 2: Table selection
   const [availableTables, setAvailableTables] = useState<string[]>([]);
@@ -95,11 +98,7 @@ export function ImportPostgresModal({ projectId, open, onOpenChange, onImportSuc
 
     setTesting(true);
     try {
-      // Test connection and get tables
-      const testResult = await testConnection('postgres', { dsn: dsn.trim() });
-      setAvailableTables(testResult.tables);
-      
-      // Create data source
+      // Create data source (this will test the connection)
       const source = await createDataSource(projectId, {
         name: name.trim(),
         description: description.trim() || undefined,
@@ -107,6 +106,10 @@ export function ImportPostgresModal({ projectId, open, onOpenChange, onImportSuc
         source_config: { dsn: dsn.trim() },
       });
       setSourceId(source.name);  // Use name instead of id for project-scoped sources
+      
+      // Fetch actual table list from the connected source
+      const tables = await fetchSourceTables(projectId, source.name);
+      setAvailableTables(tables.map(t => t.table_name));
       
       // Move to step 2
       setStep('tables');
@@ -245,13 +248,27 @@ export function ImportPostgresModal({ projectId, open, onOpenChange, onImportSuc
               <label htmlFor="dsn" className="text-sm font-medium">
                 Connection String (DSN) *
               </label>
+              <div className="relative">
               <Input
                 id="dsn"
                 placeholder="postgresql://user:password@host:5432/database"
                 value={dsn}
                 onChange={(e) => setDsn(e.target.value)}
-                type="password"
+                  type={showDsn ? 'text' : 'password'}
+                  className="pr-10"
               />
+                <button
+                  type="button"
+                  onClick={() => setShowDsn(!showDsn)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition"
+                >
+                  {showDsn ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
               <p className="text-xs text-muted-foreground">
                 PostgreSQL connection string
               </p>

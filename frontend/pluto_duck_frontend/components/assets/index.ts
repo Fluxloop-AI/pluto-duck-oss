@@ -13,4 +13,7 @@ export { AssetDetailModal } from './AssetDetailModal';
 export { CreateAssetModal } from './CreateAssetModal';
 export { ExecutionPlanView } from './ExecutionPlanView';
 export { LineageGraphView } from './LineageGraphView';
+export { SourceTableBrowserModal } from './SourceTableBrowserModal';
+export { CachedTablePreviewModal } from './CachedTablePreviewModal';
+export { TableCard, type TableItem } from './TableCard';
 

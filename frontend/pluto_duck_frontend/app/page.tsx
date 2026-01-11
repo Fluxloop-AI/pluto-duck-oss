@@ -49,6 +49,7 @@ export default function WorkspacePage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatPanelCollapsed, setChatPanelCollapsed] = useState(false);
   const [mainView, setMainView] = useState<MainView>('boards');
+  const [assetInitialTab, setAssetInitialTab] = useState<'analyses' | 'datasources'>('analyses');
   const [chatPanelWidth, setChatPanelWidth] = useState(500);
   const [chatTabs, setChatTabs] = useState<ChatTab[]>([]);
   const [activeChatTabId, setActiveChatTabId] = useState<string | null>(null);
@@ -267,13 +268,14 @@ export default function WorkspacePage() {
     setDataSourcesRefresh(prev => prev + 1);
     // Reload data sources for dropdown
     void (async () => {
+      if (!defaultProjectId) return;
       try {
-        const sources = await fetchDataSources();
+        const sources = await fetchDataSources(defaultProjectId);
         setDataSources(sources);
         const details = await Promise.all(
           sources.map(async source => {
             try {
-              const detail = await fetchDataSourceDetail(source.id);
+              const detail = await fetchDataSourceDetail(source.id, defaultProjectId);
               return detail;
             } catch (error) {
               console.error('Failed to load source detail', source.id, error);
@@ -349,10 +351,10 @@ export default function WorkspacePage() {
         <button
           onClick={() => setDataSourcesOpen(true)}
           className="ml-2 flex h-7 items-center gap-1.5 rounded-md border border-muted-foreground/40 bg-white px-2.5 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground hover:border-muted-foreground/60"
-          title="Manage data sources"
+          title="Connect data sources"
         >
           <DatabaseIcon className="h-3.5 w-3.5" />
-          <span>Data Sources</span>
+          <span>Connect Data</span>
         </button>
 
         <div
@@ -489,7 +491,7 @@ export default function WorkspacePage() {
             mainView === 'boards' ? (
             <BoardsView projectId={defaultProjectId} activeBoard={activeBoard} />
             ) : (
-              <AssetListView projectId={defaultProjectId} />
+              <AssetListView projectId={defaultProjectId} initialTab={assetInitialTab} />
             )
           ) : (
             <div className="flex h-full items-center justify-center">
@@ -544,7 +546,10 @@ export default function WorkspacePage() {
         onOpenChange={setDataSourcesOpen}
         onImportClick={handleImportClick}
         refreshTrigger={dataSourcesRefresh}
-        onNavigateToAssets={() => setMainView('assets')}
+        onNavigateToAssets={() => {
+          setAssetInitialTab('datasources');
+          setMainView('assets');
+        }}
       />
       <CreateBoardModal
         open={showCreateBoardModal}
