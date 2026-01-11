@@ -1,92 +1,112 @@
 # Pluto-Duck OSS
 
-Local-first analytics studio powered by DuckDB and an AI-assisted query agent.
+**Local-first Analytics Studio** powered by **DuckDB** and an **AI Data Agent**.  
+Chat with your data, build pipelines, and manage analytics assets—all on your local machine.
 
 <p align="center">
   <img src="docs/screen1.png" alt="Chat Interface" width="45%" />
   <img src="docs/screen2.png" alt="Data Sources" width="45%" />
 </p>
 
-## Product Vision
+## 🌟 Product Vision
 
-**Pluto Duck** is a **local-first data analytics environment** for individuals and small teams.
-Get powerful analytics capabilities without uploading your data to the cloud.
+**"Chat is ephemeral, Assets are persistent."**
 
-### Core Values
+Pluto Duck bridges the gap between ad-hoc chat analysis and reproducible data pipelines. It combines a natural language interface with a robust SQL workbench, allowing you to seamlessly transition from "asking questions" to "building dashboards."
 
-- **🔒 Privacy First**: All data and computation stay on your local machine, never transmitted externally
-- **💬 Natural Language Queries**: Ask questions and get insights by conversing with an AI agent
-- **🚀 High Performance**: DuckDB-powered analytics engine handles large datasets with speed
-- **🔌 Live Data Federation**: Connect PostgreSQL, SQLite, MySQL databases with zero-copy ATTACH
-- **📊 Asset Management**: Save, version, and execute SQL analyses with automatic lineage tracking
+- **🔒 Privacy First**: Your data never leaves your machine. The AI agent runs locally or connects to your provider of choice, but the data processing happens right on your laptop.
+- **⚡ High Performance**: Built on **DuckDB** for blazing fast analytical queries on local and remote data.
+- **🧠 Agentic Workflow**: An AI agent that doesn't just write SQL—it plans, executes, fixes errors, and suggests reusable assets.
 
-## Product Direction
+---
 
-Pluto Duck evolves in stages, developing in the following directions:
+## ✨ Key Features
 
-1. **Personal Data IDE**: A comfortable local workspace for developers and data analysts
-2. **Accessibility Expansion**: Multiple interfaces including CLI, web, and desktop applications
-3. **Open Source First**: Transparent development growing with the community
-4. **(Future) Hybrid Options**: Optional cloud capabilities for scalability when needed
+### 1. Zero-Copy Data Federation
+Connect directly to your databases and lakes without painful ETL.
+- **Live Query**: Attach PostgreSQL, MySQL, SQLite, and S3 buckets instantly using DuckDB's `ATTACH` feature.
+- **Smart Caching**: The agent intelligently suggests caching heavy datasets locally for better interactive performance.
 
-## Project Layout
+### 2. DuckPipe: The Invisible Pipeline Engine
+A built-in lightweight SQL pipeline engine designed for the "Chat-to-Asset" flow.
+- **Dependency Tracking**: Automatic DAG generation from SQL table references.
+- **Freshness Checks**: Smart execution that only re-runs stale parts of the pipeline.
+- **Code as File**: Analyses are saved as YAML/SQL files, making them Git-friendly and human-readable.
 
-- `backend/pluto_duck_backend`: FastAPI service, data services, and AI agent.
-- `backend/duckpipe`: Lightweight SQL pipeline library for analysis management.
-- `packages/pluto_duck_cli`: Typer-based CLI entrypoint (`pluto-duck`).
-- `frontend/pluto_duck_frontend`: Next.js web client with chat and board interfaces.
+### 3. Asset Management System
+Turn chat conversations into lasting value.
+- **Saved Analysis**: Convert ad-hoc queries into scheduled, versioned assets.
+- **Lineage Tracking**: Visual tracking of data flow from raw source to final insight.
+- **Boards**: Organize charts, tables, and notes into persistent dashboards.
 
-## Getting Started
+### 4. DeepAgents Runtime
+A file-system based agent architecture designed for complex tasks.
+- **Skills System**: Extensible agent capabilities defined in Markdown (`SKILL.md`).
+- **Human-in-the-Loop**: You stay in control with approval gates for data modifications.
+- **Long-running Sessions**: Persistent context allows for multi-day analysis tasks.
+
+---
+
+## 🏗 Architecture: The 3-Zone Model
+
+Pluto Duck organizes your data workflow into three logical zones to balance agility and stability:
+
+1.  **Raw Zone (Source Attach)**: Live connections to external DBs. Metadata only, no data copying.
+2.  **Work Zone (Session Cache)**: Temporary, high-speed local storage for active analysis and experimentation.
+3.  **Asset Zone (Materialized)**: Permanent, versioned data products and pipelines.
+
+---
+
+## 📂 Project Layout
+
+- `backend/pluto_duck_backend`: FastAPI service, API endpoints, and Agent runtime.
+- `backend/duckpipe`: **New!** Lightweight SQL pipeline library (dbt replacement).
+- `backend/deepagents`: File-system based agent state, memory, and skills.
+- `packages/pluto_duck_cli`: CLI tool for terminal-based analysis.
+- `frontend/pluto_duck_frontend`: Next.js web interface (Chat & Board).
+- `tauri-shell`: macOS Desktop application wrapper.
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- Python 3.10+
+- Node.js 18+ (for frontend)
+- Rust (for desktop app build)
+
+### Installation
 
 ```bash
+# 1. Setup Python Environment
 python -m venv .venv
 source .venv/bin/activate
-pip install --upgrade pip
 pip install -e .[dev]
 
-# Run linters/tests
-ruff check backend packages
-mypy backend packages
-pytest backend
-
-# Run API locally
-pluto-duck run
-
-# Stream agent events for a natural-language question
-pluto-duck agent-stream "List customers"
-```
-
-Agent responses are also available via `/api/v1/agent/{run_id}/events` as SSE streams. Each event carries structured JSON describing reasoning updates, tool outputs, and final summaries (see `docs/ARCHITECTURE.md`). For CLI instructions using a real GPT provider, refer to `docs/AGENT_CLI_GUIDE.md`.
-
-## Desktop App (macOS)
-
-### Development
-
-```bash
-# Start backend + frontend + Tauri in dev mode
+# 2. Run Backend & Frontend (Dev Mode)
 ./scripts/dev.sh
 ```
 
-### Building
+### CLI Usage
 
 ```bash
-# Build unsigned .app (for local testing)
-./scripts/build.sh
-
-# Output:
-# - tauri-shell/src-tauri/target/release/bundle/macos/Pluto Duck.app
-# - tauri-shell/src-tauri/target/release/bundle/dmg/Pluto Duck_0.1.0_aarch64.dmg
+# Run a quick query via CLI agent
+pluto-duck agent-stream "Show me top customers from my postgres db"
 ```
 
-## Roadmap Highlights
+Agent responses are streamed via SSE. Each event carries structured JSON describing reasoning updates, tool outputs, and final summaries.
 
-- ✅ Phase 1: Clean OSS backend with public API and CLI
-- ✅ Phase 2: Chat frontend with multi-board interface
-- ✅ Phase 3: macOS desktop app with Tauri
-- ✅ Phase 4: **New Data Architecture**
-  - Live data federation via DuckDB ATTACH
-  - duckpipe: lightweight SQL pipeline library
-  - Asset management with lineage tracking
+---
 
-See `docs/plans/` for detailed design notes and `docs/Pluto_Duck_new_flow.md` for the new architecture.
+## 🗺 Roadmap & Status
 
+- ✅ **Phase 1: Backend Core** - OSS backend, API, CLI.
+- ✅ **Phase 2: Chat Interface** - Multi-turn chat, basic visualizations.
+- ✅ **Phase 3: Desktop App** - Tauri integration for macOS.
+- ✅ **Phase 4: New Data Architecture**
+    - DuckPipe Engine implementation
+    - Asset System & Lineage
+    - Live Data Federation (Postgres/MySQL/S3)
+- 🚧 **Phase 5: Advanced Agent Skills** - Multi-step reasoning, complex reporting.
+
+See `docs/Pluto_Duck_new_flow.md` for details on the new architecture.
