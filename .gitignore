@@ -29,6 +29,9 @@ dist
 tauri-shell/src-tauri/target
 build
 
+# Tauri updater signing keys (private key must never be committed)
+tauri-shell/src-tauri/.tauri/update.key
+
 .dev-data
 
 build-signed.sh

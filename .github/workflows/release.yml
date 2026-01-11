@@ -116,7 +116,6 @@ jobs:
         if: runner.os == 'macOS'
         env:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           npm i -g @tauri-apps/cli@v2
@@ -125,7 +124,11 @@ jobs:
           ls -la "${ART_DIR}" || true
           for f in "${ART_DIR}"/*.app.tar.gz; do
             echo "Signing: $f"
-            npx --yes @tauri-apps/cli@v2 signer sign "$f"
+            if [ -n "${{ secrets.TAURI_SIGNING_KEY_PASSWORD }}" ]; then
+              npx --yes @tauri-apps/cli@v2 signer sign -p "${{ secrets.TAURI_SIGNING_KEY_PASSWORD }}" "$f"
+            else
+              npx --yes @tauri-apps/cli@v2 signer sign "$f"
+            fi
           done
           echo "After signing:"
           ls -la "${ART_DIR}" || true
