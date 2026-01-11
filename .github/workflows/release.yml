@@ -100,7 +100,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_KEY_PASSWORD }}
+          # IMPORTANT: do NOT set an empty password env var on macOS runners.
+          # If your key is password-protected, store it in GitHub Secrets and pass it in the signing step below.
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -119,16 +120,20 @@ jobs:
         run: |
           set -euo pipefail
           npm i -g @tauri-apps/cli@v2
+          if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
+            echo "ERROR: Missing GitHub Secret: TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            echo "This is the passphrase used when generating the updater signing key."
+            echo "See: https://tauri.app/start/migrate/from-tauri-1/#environment-variables-changes"
+            exit 1
+          fi
           ART_DIR="tauri-shell/src-tauri/target/${{ matrix.target }}/release/bundle/macos"
           echo "Signing .app.tar.gz files in: ${ART_DIR}"
           ls -la "${ART_DIR}" || true
           for f in "${ART_DIR}"/*.app.tar.gz; do
             echo "Signing: $f"
-            if [ -n "${{ secrets.TAURI_SIGNING_KEY_PASSWORD }}" ]; then
-              npx --yes @tauri-apps/cli@v2 signer sign -p "${{ secrets.TAURI_SIGNING_KEY_PASSWORD }}" "$f"
-            else
-              npx --yes @tauri-apps/cli@v2 signer sign "$f"
-            fi
+            # Workaround for macOS runner TTY issues when password is empty:
+            # Always use a password-protected key in CI and provide it here.
+            npx --yes @tauri-apps/cli@v2 signer sign -p "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" "$f"
           done
           echo "After signing:"
           ls -la "${ART_DIR}" || true
