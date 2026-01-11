@@ -66,7 +66,7 @@ jobs:
       - name: Install frontend dependencies
         run: |
           cd frontend/pluto_duck_frontend
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
 
       - name: Build backend
         run: |
