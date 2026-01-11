@@ -148,9 +148,9 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/*.tar.gz
-            artifacts/*.tar.gz.sig
-            artifacts/*.dmg
+            artifacts/**/*.tar.gz
+            artifacts/**/*.tar.gz.sig
+            artifacts/**/*.dmg
           generate_release_notes: true
           draft: false
           prerelease: false
