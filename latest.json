@@ -1,0 +1,15 @@
+{
+  "version": "0.2.2",
+  "notes": "See https://github.com/Fluxloop-AI/pluto-duck-oss/releases/tag/v0.2.2",
+  "pub_date": "2026-01-11T13:09:33.435Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "",
+      "url": "https://github.com/Fluxloop-AI/pluto-duck-oss/releases/download/v0.2.2/Pluto%20Duck.app.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "",
+      "url": "https://github.com/Fluxloop-AI/pluto-duck-oss/releases/download/v0.2.2/Pluto%20Duck.app.tar.gz"
+    }
+  }
+}

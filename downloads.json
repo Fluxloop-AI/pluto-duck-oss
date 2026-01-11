@@ -1,0 +1,31 @@
+{
+  "version": "0.2.2",
+  "releaseDate": "2026-01-11",
+  "releaseUrl": "https://github.com/Fluxloop-AI/pluto-duck-oss/releases/tag/v0.2.2",
+  "macOS": {
+    "appleSilicon": {
+      "dmg": {
+        "url": "https://github.com/Fluxloop-AI/pluto-duck-oss/releases/download/v0.2.2/Pluto%20Duck_0.2.2_aarch64.dmg",
+        "size": 118,
+        "filename": "Pluto Duck_0.2.2_aarch64.dmg"
+      },
+      "tarGz": {
+        "url": "https://github.com/Fluxloop-AI/pluto-duck-oss/releases/download/v0.2.2/Pluto%20Duck.app.tar.gz",
+        "size": 118,
+        "filename": "Pluto Duck.app.tar.gz"
+      }
+    },
+    "intel": {
+      "dmg": {
+        "url": "https://github.com/Fluxloop-AI/pluto-duck-oss/releases/download/v0.2.2/Pluto%20Duck_0.2.2_x64.dmg",
+        "size": 118,
+        "filename": "Pluto Duck_0.2.2_x64.dmg"
+      },
+      "tarGz": {
+        "url": "https://github.com/Fluxloop-AI/pluto-duck-oss/releases/download/v0.2.2/Pluto%20Duck.app.tar.gz",
+        "size": 118,
+        "filename": "Pluto Duck.app.tar.gz"
+      }
+    }
+  }
+}
