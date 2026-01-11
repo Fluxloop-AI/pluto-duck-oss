@@ -79,11 +79,14 @@ export function useAutoUpdate({
 
       const update = await check();
       if (update?.available) {
+        // Simple progress indicator (indeterminate since we don't have total size)
+        setProgress(10);
         await update.downloadAndInstall((event) => {
           if (event.event === 'Progress') {
-            const data = event.data as { downloaded: number; total: number };
-            const pct = Math.round((data.downloaded / data.total) * 100);
-            setProgress(pct);
+            // Increment progress gradually
+            setProgress((prev) => Math.min(prev + 5, 95));
+          } else if (event.event === 'Finished') {
+            setProgress(100);
           }
         });
         setReadyToRestart(true);
@@ -137,8 +140,10 @@ export function useAutoUpdate({
   useEffect(() => {
     if (!initialized || !enabled || !listen) return;
 
+    const listenFn = listen; // Capture non-null reference
+    
     const setupListener = async () => {
-      const unlisten = await listen<string>('update-available', async (event) => {
+      const unlisten = await listenFn<string>('update-available', async (event) => {
         const version = event.payload;
         console.log(`Update available: ${version}`);
         setUpdateAvailable(version);

@@ -12,7 +12,7 @@ import {
 } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
-import { createDataSource, importTablesBulk, type DataSource } from '../../lib/dataSourcesApi';
+import { createDataSource, importTablesBulk, testConnection, type DataSource } from '../../lib/dataSourcesApi';
 import { fetchSourceTables } from '../../lib/sourceApi';
 
 interface ImportPostgresModalProps {

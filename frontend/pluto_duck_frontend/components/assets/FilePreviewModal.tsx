@@ -16,7 +16,7 @@ interface FilePreviewModalProps {
 interface PreviewData {
   columns: string[];
   rows: any[][];
-  total_rows: number;
+  total_rows: number | null;
 }
 
 export function FilePreviewModal({
@@ -77,7 +77,7 @@ export function FilePreviewModal({
               <h2 className="text-lg font-semibold">{fileAsset.name}</h2>
               <p className="text-sm text-muted-foreground">
                 <span className="font-mono">{fileAsset.table_name}</span>
-                {data && (
+                {data && data.total_rows != null && (
                   <span className="ml-2">
                     • Showing {Math.min(limit, data.total_rows)} of {data.total_rows.toLocaleString()} rows
                   </span>
@@ -207,7 +207,7 @@ export function FilePreviewModal({
                 </span>{' '}
                 columns •{' '}
                 <span className="font-medium text-foreground">
-                  {data.total_rows.toLocaleString()}
+                  {data.total_rows?.toLocaleString() ?? '-'}
                 </span>{' '}
                 total rows
               </>

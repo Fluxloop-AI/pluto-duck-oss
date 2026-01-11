@@ -452,7 +452,7 @@ export function AssetEmbedComponent({
         <AssetChartView
           columns={data.columns}
           rows={data.rows}
-          chartType={config.chartConfig?.type === 'composed' ? 'line' : (config.chartConfig?.type || 'line')}
+          chartType={config.chartConfig?.type === 'composed' || config.chartConfig?.type === 'pie' ? 'line' : (config.chartConfig?.type || 'line')}
           xColumn={config.chartConfig?.xColumn || data.columns[0]}
           yColumn={config.chartConfig?.yColumn || data.columns[1]}
           groupByColumn={config.chartConfig.groupByColumn}
@@ -463,11 +463,12 @@ export function AssetEmbedComponent({
 
     // Chart with Multiple Y columns
     if (config.chartConfig?.yColumns && config.chartConfig.yColumns.length > 0) {
+      const chartType = config.chartConfig?.type === 'pie' ? 'bar' : (config.chartConfig?.type || 'bar');
       return (
         <AssetChartView
           columns={data.columns}
           rows={data.rows}
-          chartType={config.chartConfig?.type || 'bar'}
+          chartType={chartType}
           xColumn={config.chartConfig?.xColumn || data.columns[0]}
           yColumns={config.chartConfig.yColumns}
           stacked={config.chartConfig?.stacked}
