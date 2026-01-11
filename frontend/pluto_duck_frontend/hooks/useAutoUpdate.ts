@@ -4,31 +4,36 @@ import { useState, useEffect, useCallback } from 'react';
 let check: typeof import('@tauri-apps/plugin-updater').check | null = null;
 let relaunch: typeof import('@tauri-apps/plugin-process').relaunch | null = null;
 let listen: typeof import('@tauri-apps/api/event').listen | null = null;
+let getVersion: typeof import('@tauri-apps/api/app').getVersion | null = null;
+
+const AUTO_DOWNLOAD_KEY = 'pluto-duck-auto-download';
 
 // Initialize Tauri imports
 async function initTauriImports() {
   if (typeof window !== 'undefined' && '__TAURI__' in window) {
-    const [updaterModule, processModule, eventModule] = await Promise.all([
+    const [updaterModule, processModule, eventModule, appModule] = await Promise.all([
       import('@tauri-apps/plugin-updater'),
       import('@tauri-apps/plugin-process'),
       import('@tauri-apps/api/event'),
+      import('@tauri-apps/api/app'),
     ]);
     check = updaterModule.check;
     relaunch = processModule.relaunch;
     listen = eventModule.listen;
+    getVersion = appModule.getVersion;
     return true;
   }
   return false;
 }
 
 export interface UseAutoUpdateOptions {
-  /** Auto-download updates when available (default: true) */
-  autoDownload?: boolean;
   /** Enable update checking (default: true) */
   enabled?: boolean;
 }
 
 export interface UseAutoUpdateReturn {
+  /** Current app version */
+  currentVersion: string | null;
   /** New version available (null if none) */
   updateAvailable: string | null;
   /** Update has been downloaded and is ready to install */
@@ -39,30 +44,63 @@ export interface UseAutoUpdateReturn {
   progress: number;
   /** Error message if update check/download failed */
   error: string | null;
+  /** Auto-download setting */
+  autoDownload: boolean;
+  /** Set auto-download preference */
+  setAutoDownload: (value: boolean) => void;
   /** Manually trigger update download */
   downloadUpdate: () => Promise<void>;
   /** Manually check for updates */
-  checkNow: () => Promise<string | null>;
+  checkForUpdates: () => Promise<string | null>;
   /** Restart app to apply update */
-  restartApp: () => Promise<void>;
+  restart: () => Promise<void>;
   /** Dismiss update notification */
   dismiss: () => void;
 }
 
 export function useAutoUpdate({
-  autoDownload = true,
   enabled = true,
 }: UseAutoUpdateOptions = {}): UseAutoUpdateReturn {
   const [initialized, setInitialized] = useState(false);
+  const [currentVersion, setCurrentVersion] = useState<string | null>(null);
   const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
   const [readyToRestart, setReadyToRestart] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [autoDownload, setAutoDownloadState] = useState(true);
 
-  // Initialize Tauri imports
+  // Load autoDownload preference from localStorage
   useEffect(() => {
-    initTauriImports().then(setInitialized);
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(AUTO_DOWNLOAD_KEY);
+      if (saved !== null) {
+        setAutoDownloadState(saved === 'true');
+      }
+    }
+  }, []);
+
+  // Save autoDownload preference to localStorage
+  const setAutoDownload = useCallback((value: boolean) => {
+    setAutoDownloadState(value);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(AUTO_DOWNLOAD_KEY, String(value));
+    }
+  }, []);
+
+  // Initialize Tauri imports and get current version
+  useEffect(() => {
+    initTauriImports().then(async (success) => {
+      setInitialized(success);
+      if (success && getVersion) {
+        try {
+          const version = await getVersion();
+          setCurrentVersion(version);
+        } catch (e) {
+          console.error('Failed to get app version:', e);
+        }
+      }
+    });
   }, []);
 
   // Download update
@@ -100,7 +138,7 @@ export function useAutoUpdate({
   }, []);
 
   // Manual check for updates
-  const checkNow = useCallback(async (): Promise<string | null> => {
+  const checkForUpdates = useCallback(async (): Promise<string | null> => {
     if (!check) {
       setError('Update check not available');
       return null;
@@ -122,7 +160,7 @@ export function useAutoUpdate({
   }, []);
 
   // Restart app
-  const restartApp = useCallback(async () => {
+  const restart = useCallback(async () => {
     if (relaunch) {
       await relaunch();
     }
@@ -164,14 +202,17 @@ export function useAutoUpdate({
   }, [initialized, enabled, autoDownload, downloading, readyToRestart, downloadUpdate]);
 
   return {
+    currentVersion,
     updateAvailable,
     readyToRestart,
     downloading,
     progress,
     error,
+    autoDownload,
+    setAutoDownload,
     downloadUpdate,
-    checkNow,
-    restartApp,
+    checkForUpdates,
+    restart,
     dismiss,
   };
 }

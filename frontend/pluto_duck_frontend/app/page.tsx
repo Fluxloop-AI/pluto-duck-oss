@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { PlusIcon, SettingsIcon, DatabaseIcon, PanelLeftClose, PanelLeftOpen, SquarePen, LayoutDashboard, PanelRightClose, PanelRightOpen, Package } from 'lucide-react';
 
 import { SettingsModal, MultiTabChatPanel } from '../components/chat';
+import { UpdateBanner } from '../components/UpdateBanner';
 import {
   DataSourcesModal,
   ImportCSVModal,
@@ -391,6 +392,8 @@ export default function WorkspacePage() {
           )}
         </button>
       </header>
+
+      <UpdateBanner />
 
       {!backendReady && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">

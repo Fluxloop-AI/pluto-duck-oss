@@ -104,9 +104,13 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Skip notarization (add credentials later for full notarization)
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: tauri-shell
-          args: --target ${{ matrix.target }}
+          args: --target ${{ matrix.target }} --config "bundle.macOS.minimumSystemVersion=\"11.0\""
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

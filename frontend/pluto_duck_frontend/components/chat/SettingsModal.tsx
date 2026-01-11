@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { EyeIcon, EyeOffIcon, AlertTriangleIcon, TrashIcon, Loader2 } from 'lucide-react';
+import { EyeIcon, EyeOffIcon, AlertTriangleIcon, TrashIcon, Loader2, RefreshCw, Download } from 'lucide-react';
+import { useAutoUpdate } from '../../hooks/useAutoUpdate';
 import {
   Dialog,
   DialogContent,
@@ -63,6 +64,21 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
   // DB Reset states
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [resetting, setResetting] = useState(false);
+
+  // Auto Update
+  const {
+    currentVersion,
+    updateAvailable,
+    downloading,
+    progress,
+    readyToRestart,
+    error: updateError,
+    autoDownload,
+    setAutoDownload,
+    checkForUpdates,
+    downloadUpdate,
+    restart,
+  } = useAutoUpdate();
 
   const downloadPollRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
@@ -554,6 +570,93 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
                 {successMessage}
               </div>
             )}
+
+            {/* Auto Updates */}
+            <div className="mt-6 border-t border-border pt-6">
+              <div className="grid gap-4">
+                <div className="flex items-start gap-3">
+                  <Download className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
+                  <div className="grid gap-3 flex-1">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold">Auto Updates</h3>
+                      {currentVersion && (
+                        <span className="text-xs text-muted-foreground font-mono">
+                          v{currentVersion}
+                        </span>
+                      )}
+                    </div>
+                    
+                    {/* Auto Download Toggle */}
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm">Auto Download</p>
+                        <p className="text-xs text-muted-foreground">
+                          Automatically download updates in the background
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={autoDownload}
+                        onClick={() => setAutoDownload(!autoDownload)}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          autoDownload ? 'bg-primary' : 'bg-muted'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${
+                            autoDownload ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </div>
+
+                    {/* Update Status */}
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm">Current Status</p>
+                        <p className="text-xs text-muted-foreground">
+                          {readyToRestart
+                            ? `Update ready - restart to apply`
+                            : updateAvailable
+                            ? `Version ${updateAvailable} available`
+                            : 'Up to date'}
+                        </p>
+                      </div>
+                      
+                      {readyToRestart ? (
+                        <Button size="sm" onClick={restart}>
+                          Restart Now
+                        </Button>
+                      ) : downloading ? (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          {progress}%
+                        </div>
+                      ) : updateAvailable && !autoDownload ? (
+                        <Button size="sm" variant="outline" onClick={downloadUpdate}>
+                          Download
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={checkForUpdates}
+                          disabled={downloading}
+                        >
+                          <RefreshCw className="h-4 w-4 mr-1" />
+                          Check
+                        </Button>
+                      )}
+                    </div>
+
+                    {updateError && (
+                      <p className="text-xs text-destructive">{updateError}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
 
             {/* Danger Zone - Database Reset */}
             <div className="mt-6 border-t border-border pt-6">
