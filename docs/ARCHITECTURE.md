@@ -2,6 +2,10 @@
 
 This document summarizes the system architecture. For detailed specifications, see `docs/plans/` and `docs/Pluto_Duck_new_flow.md`.
 
+## Related Plans
+
+- `docs/plans/web-product-motherduck-hybrid-plan.md`: Web product plan (Postgres control-plane + MotherDuck warehouse) and code reuse strategy
+
 ## Core Concepts
 
 Pluto Duck is a **Local Agentic Data Workbench** that provides:

@@ -282,7 +282,25 @@ class FileAssetService:
                     """).fetchone()
                     if not result or result[0] == 0:
                         raise AssetValidationError(f"Target table '{safe_table}' not found for append")
-                    
+
+                    # Validate schema compatibility (simple: same column names/order)
+                    try:
+                        target_cols = [r[0] for r in conn.execute(f"DESCRIBE {safe_table}").fetchall()]
+                        source_cols = [
+                            r[0]
+                            for r in conn.execute(f"DESCRIBE SELECT * FROM {read_expr}").fetchall()
+                        ]
+                        if target_cols != source_cols:
+                            raise AssetValidationError(
+                                "Schema mismatch for append. "
+                                "Columns must match exactly. Consider using Replace."
+                            )
+                    except AssetValidationError:
+                        raise
+                    except Exception:
+                        # If DESCRIBE fails for any reason, we let DuckDB attempt the insert and surface the error.
+                        pass
+
                     conn.execute(f"INSERT INTO {safe_table} SELECT * FROM {read_expr}")
                     
                 elif mode == "merge":

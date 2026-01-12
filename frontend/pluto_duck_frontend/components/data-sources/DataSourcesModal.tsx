@@ -28,6 +28,7 @@ export function DataSourcesModal({
   
   const handleConnectorClick = (connectorType: string) => {
     onImportClick(connectorType);
+    onOpenChange(false);
   };
 
   const handleConnectionSuccess = () => {

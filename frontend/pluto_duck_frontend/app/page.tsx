@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { PlusIcon, SettingsIcon, DatabaseIcon, PanelLeftClose, PanelLeftOpen, SquarePen, LayoutDashboard, PanelRightClose, PanelRightOpen, Package } from 'lucide-react';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { isTauriRuntime } from '../lib/tauriRuntime';
 
 import { SettingsModal, MultiTabChatPanel } from '../components/chat';
 import { UpdateBanner } from '../components/UpdateBanner';
@@ -11,6 +13,7 @@ import {
   ImportParquetModal,
   ImportPostgresModal,
   ImportSQLiteModal,
+  ConnectFolderModal,
 } from '../components/data-sources';
 import { BoardsView, BoardList, CreateBoardModal } from '../components/boards';
 import { AssetListView } from '../components/assets';
@@ -41,6 +44,8 @@ export default function WorkspacePage() {
   const [importParquetOpen, setImportParquetOpen] = useState(false);
   const [importPostgresOpen, setImportPostgresOpen] = useState(false);
   const [importSQLiteOpen, setImportSQLiteOpen] = useState(false);
+  const [connectFolderOpen, setConnectFolderOpen] = useState(false);
+  const [importFilePath, setImportFilePath] = useState<string | null>(null);
   const [dataSourcesRefresh, setDataSourcesRefresh] = useState(0);
   const [selectedSourceForImport, setSelectedSourceForImport] = useState<DataSource | undefined>(undefined);
   const [defaultProjectId, setDefaultProjectId] = useState<string | null>(null);
@@ -200,11 +205,45 @@ export default function WorkspacePage() {
     setSelectedSourceForImport(source);
     
     switch (connectorType) {
-      case 'csv':
-        setImportCSVOpen(true);
+      case 'file': {
+        void (async () => {
+          try {
+            let filePath: string | null = null;
+            if (isTauriRuntime()) {
+              const selected = await openDialog({
+                multiple: false,
+                filters: [
+                  {
+                    name: 'Data Files',
+                    extensions: ['csv', 'parquet'],
+                  },
+                ],
+              });
+              if (!selected) return;
+              filePath = selected as string;
+            } else {
+              filePath = window.prompt('Paste the absolute file path (.csv or .parquet):') || null;
+              if (!filePath) return;
+            }
+            const ext = filePath.split('.').pop()?.toLowerCase();
+            setImportFilePath(filePath);
+            if (ext === 'csv') {
+              setImportCSVOpen(true);
+              return;
+            }
+            if (ext === 'parquet') {
+              setImportParquetOpen(true);
+              return;
+            }
+            console.error('Unsupported file extension:', ext);
+          } catch (e) {
+            console.error('Failed to open file dialog:', e);
+          }
+        })();
         break;
-      case 'parquet':
-        setImportParquetOpen(true);
+      }
+      case 'folder':
+        setConnectFolderOpen(true);
         break;
       case 'postgres':
         setImportPostgresOpen(true);
@@ -567,14 +606,31 @@ export default function WorkspacePage() {
       <ImportCSVModal
         projectId={defaultProjectId || ''}
         open={importCSVOpen}
-        onOpenChange={setImportCSVOpen}
+        onOpenChange={(open) => {
+          setImportCSVOpen(open);
+          if (!open) setImportFilePath(null);
+        }}
         onImportSuccess={handleImportSuccess}
+        initialFilePath={importFilePath || undefined}
       />
       <ImportParquetModal
         projectId={defaultProjectId || ''}
         open={importParquetOpen}
-        onOpenChange={setImportParquetOpen}
+        onOpenChange={(open) => {
+          setImportParquetOpen(open);
+          if (!open) setImportFilePath(null);
+        }}
         onImportSuccess={handleImportSuccess}
+        initialFilePath={importFilePath || undefined}
+      />
+      <ConnectFolderModal
+        projectId={defaultProjectId || ''}
+        open={connectFolderOpen}
+        onOpenChange={setConnectFolderOpen}
+        onSuccess={() => {
+          setAssetInitialTab('datasources');
+          setMainView('assets');
+        }}
       />
       <ImportPostgresModal
         projectId={defaultProjectId || ''}

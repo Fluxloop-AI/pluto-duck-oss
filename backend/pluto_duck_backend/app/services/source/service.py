@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from functools import lru_cache
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse, parse_qs
@@ -71,6 +72,45 @@ class AttachedSource:
     project_id: Optional[str] = None
     description: Optional[str] = None
     table_count: int = 0
+
+
+@dataclass
+class FolderSource:
+    """A folder-based source (local directory path).
+
+    Folder sources are project-scoped and act like a "container" of files that
+    can be turned into local Datasets (DuckDB tables) by importing files.
+    """
+
+    id: str
+    name: str
+    path: str
+    allowed_types: str  # "csv" | "parquet" | "both"
+    pattern: Optional[str]
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+@dataclass
+class FolderFile:
+    """A file discovered inside a folder source."""
+
+    path: str
+    name: str
+    file_type: str  # "csv" | "parquet"
+    size_bytes: int
+    modified_at: datetime
+
+
+@dataclass
+class FolderScanResult:
+    """Delta from the previous scan snapshot."""
+
+    folder_id: str
+    scanned_at: datetime
+    new_files: int
+    changed_files: int
+    deleted_files: int
 
 
 @dataclass
@@ -134,6 +174,20 @@ _DDL_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS _sources.folders (
+        id VARCHAR PRIMARY KEY,
+        name VARCHAR UNIQUE NOT NULL,
+        path VARCHAR NOT NULL,
+        allowed_types VARCHAR NOT NULL,
+        pattern VARCHAR,
+        created_at TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP,
+        project_id VARCHAR NOT NULL,
+        last_scanned_at TIMESTAMP,
+        last_scan_snapshot JSON
+    )
+    """,
+    """
     CREATE SCHEMA IF NOT EXISTS cache
     """,
 ]
@@ -143,6 +197,8 @@ _MIGRATION_STATEMENTS = [
     "ALTER TABLE _sources.attached ADD COLUMN IF NOT EXISTS project_id VARCHAR",
     "ALTER TABLE _sources.attached ADD COLUMN IF NOT EXISTS description VARCHAR",
     "ALTER TABLE _sources.attached ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP",
+    "ALTER TABLE _sources.folders ADD COLUMN IF NOT EXISTS last_scanned_at TIMESTAMP",
+    "ALTER TABLE _sources.folders ADD COLUMN IF NOT EXISTS last_scan_snapshot JSON",
 ]
 
 
@@ -159,6 +215,20 @@ def _sanitize_config(config: Dict[str, Any]) -> Dict[str, Any]:
         k: "***" if any(s in k.lower() for s in sensitive_keys) else v
         for k, v in config.items()
     }
+
+
+def _normalize_local_path(raw: str) -> str:
+    """Normalize a user-provided local filesystem path.
+
+    In web fallback flows users often paste quoted paths like:
+      '/Users/me/data'
+      "/Users/me/data"
+    We strip a single pair of wrapping quotes and whitespace.
+    """
+    s = (raw or "").strip()
+    if len(s) >= 2 and ((s[0] == s[-1] == "'") or (s[0] == s[-1] == '"')):
+        s = s[1:-1].strip()
+    return s
 
 
 class SourceService:
@@ -680,6 +750,269 @@ class SourceService:
             )
         
         return self.get_source(name)
+
+    # =========================================================================
+    # Folder Sources (local directory sources)
+    # =========================================================================
+
+    def create_folder_source(
+        self,
+        *,
+        name: str,
+        path: str,
+        allowed_types: str = "both",
+        pattern: Optional[str] = None,
+    ) -> FolderSource:
+        """Create (or update) a folder source for this project."""
+        allowed_types = allowed_types.lower().strip()
+        if allowed_types not in ("csv", "parquet", "both"):
+            raise ValueError("allowed_types must be one of: csv, parquet, both")
+
+        normalized_path = _normalize_local_path(path)
+        folder_path = Path(normalized_path).expanduser()
+        if not folder_path.exists():
+            raise ValueError(f"Folder not found: {normalized_path}")
+        if not folder_path.is_dir():
+            raise ValueError(f"Path is not a directory: {normalized_path}")
+
+        now = datetime.now(UTC)
+        folder_id = f"folder_{uuid4().hex[:12]}"
+
+        with self._connect() as con:
+            con.execute(
+                """
+                INSERT INTO _sources.folders (
+                    id, name, path, allowed_types, pattern, created_at, updated_at, project_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (name) DO UPDATE SET
+                    path = EXCLUDED.path,
+                    allowed_types = EXCLUDED.allowed_types,
+                    pattern = EXCLUDED.pattern,
+                    updated_at = EXCLUDED.updated_at,
+                    project_id = EXCLUDED.project_id
+                """,
+                [
+                    folder_id,
+                    name,
+                    str(folder_path),
+                    allowed_types,
+                    pattern,
+                    now,
+                    now,
+                    self.project_id,
+                ],
+            )
+
+            row = con.execute(
+                """
+                SELECT id, name, path, allowed_types, pattern, created_at, updated_at
+                FROM _sources.folders
+                WHERE name = ? AND project_id = ?
+                """,
+                [name, self.project_id],
+            ).fetchone()
+
+        if not row:
+            raise ValueError("Failed to create folder source")
+
+        return FolderSource(
+            id=row[0],
+            name=row[1],
+            path=row[2],
+            allowed_types=row[3],
+            pattern=row[4],
+            created_at=row[5],
+            updated_at=row[6],
+        )
+
+    def list_folder_sources(self) -> List[FolderSource]:
+        """List folder sources for this project."""
+        with self._connect() as con:
+            rows = con.execute(
+                """
+                SELECT id, name, path, allowed_types, pattern, created_at, updated_at
+                FROM _sources.folders
+                WHERE project_id = ?
+                ORDER BY COALESCE(updated_at, created_at) DESC
+                """,
+                [self.project_id],
+            ).fetchall()
+
+        return [
+            FolderSource(
+                id=r[0],
+                name=r[1],
+                path=r[2],
+                allowed_types=r[3],
+                pattern=r[4],
+                created_at=r[5],
+                updated_at=r[6],
+            )
+            for r in rows
+        ]
+
+    def delete_folder_source(self, folder_id: str) -> bool:
+        """Delete a folder source by id."""
+        with self._connect() as con:
+            exists = con.execute(
+                "SELECT 1 FROM _sources.folders WHERE id = ? AND project_id = ?",
+                [folder_id, self.project_id],
+            ).fetchone()
+            if not exists:
+                return False
+
+            con.execute(
+                "DELETE FROM _sources.folders WHERE id = ? AND project_id = ?",
+                [folder_id, self.project_id],
+            )
+            return True
+
+    def list_folder_files(
+        self,
+        folder_id: str,
+        *,
+        limit: int = 500,
+    ) -> List[FolderFile]:
+        """Scan the folder source and return CSV/Parquet files (non-recursive)."""
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+
+        with self._connect() as con:
+            row = con.execute(
+                """
+                SELECT path, allowed_types, pattern
+                FROM _sources.folders
+                WHERE id = ? AND project_id = ?
+                """,
+                [folder_id, self.project_id],
+            ).fetchone()
+
+        if not row:
+            raise SourceNotFoundError(folder_id)
+
+        folder_path = Path(row[0]).expanduser()
+        allowed_types = (row[1] or "both").lower()
+        pattern = row[2]
+
+        if not folder_path.exists() or not folder_path.is_dir():
+            # If directory was moved/deleted, return empty and let UI show state.
+            return []
+
+        allowed_exts: set[str]
+        if allowed_types == "csv":
+            allowed_exts = {"csv"}
+        elif allowed_types == "parquet":
+            allowed_exts = {"parquet"}
+        else:
+            allowed_exts = {"csv", "parquet"}
+
+        items: List[FolderFile] = []
+        for p in folder_path.iterdir():
+            if not p.is_file():
+                continue
+            ext = p.suffix.lower().lstrip(".")
+            if ext not in allowed_exts:
+                continue
+            if pattern and not fnmatch(p.name, pattern):
+                continue
+
+            stat = p.stat()
+            items.append(
+                FolderFile(
+                    path=str(p),
+                    name=p.name,
+                    file_type=ext,
+                    size_bytes=stat.st_size,
+                    modified_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC),
+                )
+            )
+
+            if len(items) >= limit:
+                break
+
+        items.sort(key=lambda x: x.modified_at, reverse=True)
+        return items
+
+    def scan_folder_source(self, folder_id: str, *, limit: int = 5000) -> FolderScanResult:
+        """Scan a folder source, compare with last snapshot, and persist the new snapshot."""
+        now = datetime.now(UTC)
+
+        # Load previous snapshot
+        with self._connect() as con:
+            row = con.execute(
+                """
+                SELECT last_scan_snapshot
+                FROM _sources.folders
+                WHERE id = ? AND project_id = ?
+                """,
+                [folder_id, self.project_id],
+            ).fetchone()
+
+        if not row:
+            raise SourceNotFoundError(folder_id)
+
+        prev_snapshot_raw = row[0]
+        prev_map: Dict[str, Dict[str, Any]] = {}
+        try:
+            if prev_snapshot_raw:
+                prev_list = json.loads(prev_snapshot_raw) if isinstance(prev_snapshot_raw, str) else prev_snapshot_raw
+                if isinstance(prev_list, list):
+                    for it in prev_list:
+                        if isinstance(it, dict) and it.get("path"):
+                            prev_map[str(it["path"])] = it
+        except Exception:
+            prev_map = {}
+
+        # Current scan
+        files = self.list_folder_files(folder_id, limit=limit)
+        curr_list: List[Dict[str, Any]] = []
+        curr_map: Dict[str, Dict[str, Any]] = {}
+        for f in files:
+            it = {
+                "path": f.path,
+                "name": f.name,
+                "file_type": f.file_type,
+                "size_bytes": f.size_bytes,
+                "modified_at": f.modified_at.isoformat(),
+            }
+            curr_list.append(it)
+            curr_map[f.path] = it
+
+        new_files = 0
+        changed_files = 0
+
+        for path, it in curr_map.items():
+            prev = prev_map.get(path)
+            if not prev:
+                new_files += 1
+                continue
+            # change heuristic: size or modified_at differs
+            if prev.get("size_bytes") != it.get("size_bytes") or prev.get("modified_at") != it.get("modified_at"):
+                changed_files += 1
+
+        deleted_files = 0
+        for path in prev_map.keys():
+            if path not in curr_map:
+                deleted_files += 1
+
+        # Persist new snapshot
+        with self._connect() as con:
+            con.execute(
+                """
+                UPDATE _sources.folders
+                SET last_scanned_at = ?, last_scan_snapshot = ?
+                WHERE id = ? AND project_id = ?
+                """,
+                [now, json.dumps(curr_list), folder_id, self.project_id],
+            )
+
+        return FolderScanResult(
+            folder_id=folder_id,
+            scanned_at=now,
+            new_files=new_files,
+            changed_files=changed_files,
+            deleted_files=deleted_files,
+        )
 
     def _row_to_attached_source(self, row: tuple) -> AttachedSource:
         """Convert database row to AttachedSource."""

@@ -1,6 +1,6 @@
 'use client';
 
-import { DatabaseIcon, FileTextIcon, PackageIcon, ServerIcon } from 'lucide-react';
+import { DatabaseIcon, FileTextIcon, FolderIcon, ServerIcon } from 'lucide-react';
 
 interface ConnectorCardProps {
   type: string;
@@ -34,16 +34,16 @@ interface ConnectorGridProps {
 
 const CONNECTORS = [
   {
-    type: 'csv',
-    name: 'CSV File',
+    type: 'file',
+    name: 'Import file',
     icon: <FileTextIcon className="h-8 w-8" />,
-    description: 'Import from CSV files',
+    description: 'Create a Dataset from one file (CSV/Parquet)',
   },
   {
-    type: 'parquet',
-    name: 'Parquet File',
-    icon: <PackageIcon className="h-8 w-8" />,
-    description: 'Import from Parquet files',
+    type: 'folder',
+    name: 'Connect folder',
+    icon: <FolderIcon className="h-8 w-8" />,
+    description: 'Add a folder as a Source and import files from it',
   },
   {
     type: 'postgres',

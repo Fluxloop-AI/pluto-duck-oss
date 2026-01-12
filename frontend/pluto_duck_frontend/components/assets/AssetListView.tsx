@@ -18,6 +18,7 @@ import {
   Database,
   Plug,
   HardDrive,
+  Folder,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -31,6 +32,7 @@ import { LineageGraphView } from './LineageGraphView';
 import { FilePreviewModal } from './FilePreviewModal';
 import { SourceTableBrowserModal } from './SourceTableBrowserModal';
 import { CachedTablePreviewModal } from './CachedTablePreviewModal';
+import { FolderSourceBrowserModal } from './FolderSourceBrowserModal';
 import { ImportCSVModal } from '../data-sources/ImportCSVModal';
 import { ImportParquetModal } from '../data-sources/ImportParquetModal';
 import {
@@ -53,10 +55,15 @@ import {
 import {
   fetchSources,
   fetchCachedTables,
+  listFolderSources,
+  scanFolderSource,
   deleteSource,
+  deleteFolderSource,
   dropCache,
   type Source,
   type CachedTable,
+  type FolderSource,
+  type FolderFile,
 } from '@/lib/sourceApi';
 
 interface AssetListViewProps {
@@ -78,6 +85,8 @@ export function AssetListView({ projectId, initialTab }: AssetListViewProps) {
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [fileAssets, setFileAssets] = useState<FileAsset[]>([]);
   const [liveConnections, setLiveConnections] = useState<Source[]>([]);
+  const [folderSources, setFolderSources] = useState<FolderSource[]>([]);
+  const [folderNewCounts, setFolderNewCounts] = useState<Record<string, number>>({});
   const [cachedTables, setCachedTables] = useState<CachedTable[]>([]);
   const [freshnessMap, setFreshnessMap] = useState<Record<string, FreshnessStatus>>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -123,10 +132,14 @@ export function AssetListView({ projectId, initialTab }: AssetListViewProps) {
   const [selectedCachedTable, setSelectedCachedTable] = useState<CachedTable | null>(null);
   const [showCachedTablePreview, setShowCachedTablePreview] = useState(false);
   
-  // Add Data Modal State
-  const [showAddDataModal, setShowAddDataModal] = useState(false);
-  const [addDataTargetTable, setAddDataTargetTable] = useState<string | null>(null);
-  const [addDataFileType, setAddDataFileType] = useState<'csv' | 'parquet'>('csv');
+  // Import (create dataset) modals (used from Folder Sources browser)
+  const [showImportCSVModal, setShowImportCSVModal] = useState(false);
+  const [showImportParquetModal, setShowImportParquetModal] = useState(false);
+  const [importInitialFilePath, setImportInitialFilePath] = useState<string | null>(null);
+
+  // Folder Source Browser
+  const [selectedFolderSource, setSelectedFolderSource] = useState<FolderSource | null>(null);
+  const [showFolderBrowser, setShowFolderBrowser] = useState(false);
 
   // Fetch all data: analyses, file assets, live connections, cached tables
   const fetchAnalyses = useCallback(async () => {
@@ -134,21 +147,24 @@ export function AssetListView({ projectId, initialTab }: AssetListViewProps) {
     setError(null);
     try {
       // Fetch all data in parallel
-      const [analysesData, fileAssetsData, sourcesData, cachedTablesData] = await Promise.all([
+      const [analysesData, fileAssetsData, sourcesData, folderSourcesData, cachedTablesData] = await Promise.all([
         listAnalyses({ projectId }),
         listFileAssets(projectId),
         fetchSources(projectId),
+        listFolderSources(projectId),
         fetchCachedTables(projectId),
       ]);
       
       setAnalyses(analysesData);
       setFileAssets(fileAssetsData);
       setLiveConnections(sourcesData);
+      setFolderSources(folderSourcesData);
       setCachedTables(cachedTablesData);
       console.log('[AssetListView] Loaded data:', {
         analyses: analysesData.length,
         fileAssets: fileAssetsData.length,
         sources: sourcesData.length,
+        folderSources: folderSourcesData.length,
         cachedTables: cachedTablesData.length,
         sourcesData,
         activeTab,
@@ -183,6 +199,41 @@ export function AssetListView({ projectId, initialTab }: AssetListViewProps) {
   useEffect(() => {
     fetchAnalyses();
   }, [fetchAnalyses]);
+
+  // P3-1: Scan folders when entering Assets → Data Sources → Sources subtab
+  useEffect(() => {
+    if (activeTab !== 'datasources') return;
+    if (dataSourceSubTab !== 'sources') return;
+    if (folderSources.length === 0) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const results = await Promise.all(
+          folderSources.map(async (f) => {
+            try {
+              const r = await scanFolderSource(projectId, f.id);
+              return [f.id, r.new_files] as const;
+            } catch (e) {
+              console.warn('[AssetListView] Folder scan failed:', f.id, e);
+              return [f.id, 0] as const;
+            }
+          })
+        );
+        if (cancelled) return;
+        const map: Record<string, number> = {};
+        for (const [id, cnt] of results) map[id] = cnt;
+        setFolderNewCounts(map);
+      } catch (e) {
+        console.warn('[AssetListView] Folder scans failed:', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, dataSourceSubTab, folderSources, projectId]);
 
   // Get all unique tags
   const allTags = useMemo(() => {
@@ -431,18 +482,13 @@ export function AssetListView({ projectId, initialTab }: AssetListViewProps) {
     }
   };
 
-  // Add Data handler - opens import modal with table preselected
-  const handleAddData = (item: TableItem) => {
-    if (item.type === 'file') {
-      const fileAsset = item.data as FileAsset;
-      setAddDataTargetTable(fileAsset.table_name);
-      setAddDataFileType(fileAsset.file_type);
-      setShowAddDataModal(true);
-    }
-  };
-
   // Empty state - only show if ALL data types are empty
-  const hasAnyData = analyses.length > 0 || fileAssets.length > 0 || liveConnections.length > 0 || cachedTables.length > 0;
+  const hasAnyData =
+    analyses.length > 0 ||
+    fileAssets.length > 0 ||
+    liveConnections.length > 0 ||
+    folderSources.length > 0 ||
+    cachedTables.length > 0;
   
   if (!isLoading && !hasAnyData) {
     return (
@@ -500,9 +546,9 @@ export function AssetListView({ projectId, initialTab }: AssetListViewProps) {
           >
             <Database className="h-4 w-4" />
             Data Sources
-            {(liveConnections.length + cachedTables.length + fileAssets.length) > 0 && (
+            {(liveConnections.length + folderSources.length + cachedTables.length + fileAssets.length) > 0 && (
               <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                {liveConnections.length + cachedTables.length + fileAssets.length}
+                {liveConnections.length + folderSources.length + cachedTables.length + fileAssets.length}
               </span>
             )}
           </button>
@@ -804,7 +850,7 @@ export function AssetListView({ projectId, initialTab }: AssetListViewProps) {
                 onViewLineage={handleViewLineage}
               />
             ))}
-            </div>
+          </div>
               )
             )}
           </div>
@@ -823,9 +869,9 @@ export function AssetListView({ projectId, initialTab }: AssetListViewProps) {
               >
                 <Plug className="h-4 w-4" />
                 Sources
-                {liveConnections.length > 0 && (
+                {(liveConnections.length + folderSources.length) > 0 && (
                   <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs">
-                    {liveConnections.length}
+                    {liveConnections.length + folderSources.length}
                   </span>
                 )}
               </button>
@@ -861,66 +907,127 @@ export function AssetListView({ projectId, initialTab }: AssetListViewProps) {
                 ))}
               </div>
             ) : dataSourceSubTab === 'sources' ? (
-              // Sources (Database connections)
-              liveConnections.length === 0 ? (
+              // Sources (DB connections + Folder sources)
+              (liveConnections.length + folderSources.length) === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12">
                   <Plug className="h-12 w-12 text-muted-foreground mb-3" />
                   <p className="text-muted-foreground mb-1">No sources connected</p>
                   <p className="text-sm text-muted-foreground">
-                    Connect to databases or add file paths using Connect Data
+                    Connect to databases or folders using Connect Data
                   </p>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {liveConnections.map((source) => (
-                    <div
-                      key={source.id}
-                      className="flex items-center justify-between rounded-lg border border-border bg-card p-4"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${
-                          source.status === 'attached' ? 'bg-green-500/10' : 'bg-red-500/10'
-                        }`}>
-                          <Database className={`h-5 w-5 ${
-                            source.status === 'attached' ? 'text-green-500' : 'text-red-500'
-                          }`} />
-                        </div>
-                        <div>
-                          <p className="font-medium text-foreground">{source.name}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {source.source_type.toUpperCase()} • {source.table_count} tables • {
-                              source.status === 'attached' ? '🟢 Connected' : '🔴 Disconnected'
-                            }
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedSource(source);
-                            setShowSourceBrowser(true);
-                          }}
+                <div className="space-y-4">
+                  {/* DB Sources */}
+                  {liveConnections.length > 0 && (
+                    <div className="space-y-3">
+                      {liveConnections.map((source) => (
+                        <div
+                          key={source.id}
+                          className="flex items-center justify-between rounded-lg border border-border bg-card p-4"
                         >
-                          Browse Tables
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive hover:text-destructive"
-                          onClick={async () => {
-                            if (confirm(`Disconnect ${source.name}?`)) {
-                              await deleteSource(projectId, source.name);
-                              fetchAnalyses();
-                            }
-                          }}
-                        >
-                          Disconnect
-                        </Button>
-                      </div>
+                          <div className="flex items-center gap-3">
+                            <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${
+                              source.status === 'attached' ? 'bg-green-500/10' : 'bg-red-500/10'
+                            }`}>
+                              <Database className={`h-5 w-5 ${
+                                source.status === 'attached' ? 'text-green-500' : 'text-red-500'
+                              }`} />
+                            </div>
+                            <div>
+                              <p className="font-medium text-foreground">{source.name}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {source.source_type.toUpperCase()} • {source.table_count} tables • {
+                                  source.status === 'attached' ? '🟢 Connected' : '🔴 Disconnected'
+                                }
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedSource(source);
+                                setShowSourceBrowser(true);
+                              }}
+                            >
+                              Browse Tables
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={async () => {
+                                if (confirm(`Disconnect ${source.name}?`)) {
+                                  await deleteSource(projectId, source.name);
+                                  fetchAnalyses();
+                                }
+                              }}
+                            >
+                              Disconnect
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
+
+                  {/* Folder Sources */}
+                  {folderSources.length > 0 && (
+                    <div className="space-y-3">
+                      {folderSources.map((folder) => (
+                        <div
+                          key={folder.id}
+                          className="flex items-center justify-between rounded-lg border border-border bg-card p-4"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                              <Folder className="h-5 w-5 text-primary" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <p className="font-medium text-foreground truncate">{folder.name}</p>
+                                {(folderNewCounts[folder.id] ?? 0) > 0 && (
+                                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary whitespace-nowrap">
+                                    New files: {folderNewCounts[folder.id]}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-sm text-muted-foreground truncate" title={folder.path}>
+                                {folder.path}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedFolderSource(folder);
+                                setShowFolderBrowser(true);
+                              }}
+                            >
+                              Browse Files
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={async () => {
+                                if (confirm(`Remove folder source "${folder.name}"?`)) {
+                                  await deleteFolderSource(projectId, folder.id);
+                                  fetchAnalyses();
+                                }
+                              }}
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )
             ) : (
@@ -979,7 +1086,6 @@ export function AssetListView({ projectId, initialTab }: AssetListViewProps) {
                         onView={handleViewTable}
                         onRefresh={handleRefreshTable}
                         onDelete={handleDeleteTable}
-                        onAddData={handleAddData}
                       />
                     ))}
                   </div>
@@ -1064,37 +1170,55 @@ export function AssetListView({ projectId, initialTab }: AssetListViewProps) {
         />
       )}
 
-      {/* Add Data Modal - CSV */}
-      {addDataFileType === 'csv' && (
-        <ImportCSVModal
-          projectId={projectId}
-          open={showAddDataModal}
-          onOpenChange={(open) => {
-            setShowAddDataModal(open);
-            if (!open) setAddDataTargetTable(null);
-          }}
-          onImportSuccess={() => {
-            fetchAnalyses();
-          }}
-          preselectedTable={addDataTargetTable || undefined}
-        />
-      )}
+      {/* Folder Source Browser Modal */}
+      <FolderSourceBrowserModal
+        projectId={projectId}
+        folderSource={selectedFolderSource}
+        open={showFolderBrowser}
+        onOpenChange={(open) => {
+          setShowFolderBrowser(open);
+          if (!open) setSelectedFolderSource(null);
+        }}
+        onDatasetsChanged={() => {
+          fetchAnalyses();
+        }}
+        onCreateDatasetFromFile={(file: FolderFile) => {
+          setImportInitialFilePath(file.path);
+          if (file.file_type === 'csv') {
+            setShowImportCSVModal(true);
+          } else {
+            setShowImportParquetModal(true);
+          }
+        }}
+      />
 
-      {/* Add Data Modal - Parquet */}
-      {addDataFileType === 'parquet' && (
-        <ImportParquetModal
-          projectId={projectId}
-          open={showAddDataModal}
-          onOpenChange={(open) => {
-            setShowAddDataModal(open);
-            if (!open) setAddDataTargetTable(null);
-          }}
-          onImportSuccess={() => {
-            fetchAnalyses();
-          }}
-          preselectedTable={addDataTargetTable || undefined}
-        />
-      )}
+      {/* Import (Create Dataset) - CSV */}
+      <ImportCSVModal
+        projectId={projectId}
+        open={showImportCSVModal}
+        onOpenChange={(open) => {
+          setShowImportCSVModal(open);
+          if (!open) setImportInitialFilePath(null);
+        }}
+        onImportSuccess={() => {
+          fetchAnalyses();
+        }}
+        initialFilePath={importInitialFilePath || undefined}
+      />
+
+      {/* Import (Create Dataset) - Parquet */}
+      <ImportParquetModal
+        projectId={projectId}
+        open={showImportParquetModal}
+        onOpenChange={(open) => {
+          setShowImportParquetModal(open);
+          if (!open) setImportInitialFilePath(null);
+        }}
+        onImportSuccess={() => {
+          fetchAnalyses();
+        }}
+        initialFilePath={importInitialFilePath || undefined}
+      />
     </div>
   );
 }

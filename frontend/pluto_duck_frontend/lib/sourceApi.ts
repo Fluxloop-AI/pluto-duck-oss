@@ -78,6 +78,41 @@ export interface SizeEstimate {
   error: string | null;
 }
 
+export type FolderAllowedTypes = 'csv' | 'parquet' | 'both';
+
+export interface FolderSource {
+  id: string;
+  name: string;
+  path: string;
+  allowed_types: FolderAllowedTypes;
+  pattern: string | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface CreateFolderSourceRequest {
+  name: string;
+  path: string;
+  allowed_types?: FolderAllowedTypes;
+  pattern?: string | null;
+}
+
+export interface FolderFile {
+  path: string;
+  name: string;
+  file_type: 'csv' | 'parquet';
+  size_bytes: number;
+  modified_at: string;
+}
+
+export interface FolderScanResult {
+  folder_id: string;
+  scanned_at: string;
+  new_files: number;
+  changed_files: number;
+  deleted_files: number;
+}
+
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -218,6 +253,56 @@ export async function dropCache(projectId: string, localTable: string): Promise<
 
 export async function cleanupExpiredCaches(projectId: string): Promise<{ cleaned_count: number }> {
   const url = buildUrl('/api/v1/source/cache/cleanup', projectId);
+  const response = await fetch(url, { method: 'POST' });
+  return handleResponse(response);
+}
+
+// =============================================================================
+// Folder Source Operations
+// =============================================================================
+
+export async function listFolderSources(projectId: string): Promise<FolderSource[]> {
+  const url = buildUrl('/api/v1/source/folders', projectId);
+  const response = await fetch(url);
+  return handleResponse(response);
+}
+
+export async function createFolderSource(
+  projectId: string,
+  request: CreateFolderSourceRequest
+): Promise<FolderSource> {
+  const url = buildUrl('/api/v1/source/folders', projectId);
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  return handleResponse(response);
+}
+
+export async function deleteFolderSource(projectId: string, folderId: string): Promise<void> {
+  const url = buildUrl(`/api/v1/source/folders/${encodeURIComponent(folderId)}`, projectId);
+  const response = await fetch(url, { method: 'DELETE' });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || `Failed to delete folder source: ${response.status}`);
+  }
+}
+
+export async function listFolderFiles(
+  projectId: string,
+  folderId: string,
+  limit: number = 500
+): Promise<FolderFile[]> {
+  const url = buildUrl(`/api/v1/source/folders/${encodeURIComponent(folderId)}/files`, projectId, {
+    limit: String(limit),
+  });
+  const response = await fetch(url);
+  return handleResponse(response);
+}
+
+export async function scanFolderSource(projectId: string, folderId: string): Promise<FolderScanResult> {
+  const url = buildUrl(`/api/v1/source/folders/${encodeURIComponent(folderId)}/scan`, projectId);
   const response = await fetch(url, { method: 'POST' });
   return handleResponse(response);
 }

@@ -11,7 +11,6 @@ import {
   Rows,
   Clock,
   ExternalLink,
-  Plus,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -33,7 +32,6 @@ interface TableCardProps {
   onView: (item: TableItem) => void;
   onRefresh: (item: TableItem) => void;
   onDelete: (item: TableItem) => void;
-  onAddData?: (item: TableItem) => void; // Only for file-based tables
 }
 
 export function TableCard({
@@ -41,7 +39,6 @@ export function TableCard({
   onView,
   onRefresh,
   onDelete,
-  onAddData,
 }: TableCardProps) {
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return '-';
@@ -175,24 +172,11 @@ export function TableCard({
       <div className="flex items-center gap-2">
         <button
           onClick={() => onView(item)}
-          className={`flex items-center justify-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 ${
-            isDatabase || !onAddData ? 'flex-1' : ''
-          }`}
+          className="flex-1 flex items-center justify-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
         >
           <Eye className="h-3 w-3" />
-          {(isDatabase || !onAddData) && <span>Preview</span>}
+          <span>Preview</span>
         </button>
-        {/* Add Data button - only for file-based tables */}
-        {!isDatabase && onAddData && (
-          <button
-            onClick={() => onAddData(item)}
-            className="flex-1 flex items-center justify-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-            title="Add more data to this table"
-          >
-            <Plus className="h-3 w-3" />
-            Add data from file
-          </button>
-        )}
         <button
           onClick={() => onRefresh(item)}
           className="flex items-center justify-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"

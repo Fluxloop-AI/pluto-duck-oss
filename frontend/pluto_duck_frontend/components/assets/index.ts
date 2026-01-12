@@ -16,4 +16,6 @@ export { LineageGraphView } from './LineageGraphView';
 export { SourceTableBrowserModal } from './SourceTableBrowserModal';
 export { CachedTablePreviewModal } from './CachedTablePreviewModal';
 export { TableCard, type TableItem } from './TableCard';
+export { FolderSourceBrowserModal } from './FolderSourceBrowserModal';
+export { AddToExistingDatasetModal } from './AddToExistingDatasetModal';
 

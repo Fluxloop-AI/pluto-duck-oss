@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { FolderOpenIcon, Plus, Layers } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { FolderOpenIcon } from 'lucide-react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import {
   Dialog,
@@ -13,14 +13,17 @@ import {
 } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
-import { importFile, listFileAssets, type FileAsset, type ImportMode } from '../../lib/fileAssetApi';
+import { importFile, listFileAssets } from '../../lib/fileAssetApi';
+import { fetchCachedTables } from '@/lib/sourceApi';
+import { listAnalyses } from '@/lib/assetsApi';
+import { isTauriRuntime } from '@/lib/tauriRuntime';
 
 interface ImportCSVModalProps {
   projectId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImportSuccess?: () => void;
-  preselectedTable?: string; // For "Add Data" from TableCard
+  initialFilePath?: string;
 }
 
 export function ImportCSVModal({ 
@@ -28,7 +31,7 @@ export function ImportCSVModal({
   open, 
   onOpenChange, 
   onImportSuccess,
-  preselectedTable,
+  initialFilePath,
 }: ImportCSVModalProps) {
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,42 +42,84 @@ export function ImportCSVModal({
   const [filePath, setFilePath] = useState('');
   const [tableName, setTableName] = useState('');
   const [description, setDescription] = useState('');
-  
-  // Mode state
-  const [importType, setImportType] = useState<'new' | 'existing'>('new');
-  const [mode, setMode] = useState<ImportMode>('replace');
-  const [targetTable, setTargetTable] = useState('');
-  const [mergeKeys, setMergeKeys] = useState('');
-  
-  // Existing tables
-  const [existingTables, setExistingTables] = useState<FileAsset[]>([]);
-  const [loadingTables, setLoadingTables] = useState(false);
 
-  // Load existing tables when modal opens
+  const [reservedTableNames, setReservedTableNames] = useState<Set<string>>(new Set());
+  const [tableNameTouched, setTableNameTouched] = useState(false);
+  const [nameTouched, setNameTouched] = useState(false);
+
   useEffect(() => {
     if (open) {
-      loadExistingTables();
-      
-      // If preselected table, set up for append mode
-      if (preselectedTable) {
-        setImportType('existing');
-        setTargetTable(preselectedTable);
-        setMode('append');
-      }
-    }
-  }, [open, preselectedTable]);
+      setError(null);
+      setSuccessMessage(null);
 
-  const loadExistingTables = async () => {
-    setLoadingTables(true);
-    try {
-      const tables = await listFileAssets(projectId);
-      setExistingTables(tables);
-    } catch (err) {
-      console.error('Failed to load existing tables:', err);
-    } finally {
-      setLoadingTables(false);
+      // reset (but keep provided file path)
+      setNameTouched(false);
+      setTableNameTouched(false);
+      setName('');
+      setTableName('');
+      setDescription('');
+
+      if (initialFilePath) {
+        setFilePath(initialFilePath);
+      } else {
+        setFilePath('');
+      }
+
+      void (async () => {
+        try {
+          const [files, cached, analyses] = await Promise.all([
+            listFileAssets(projectId),
+            fetchCachedTables(projectId),
+            listAnalyses({ projectId }),
+          ]);
+          const names = new Set<string>();
+          files.forEach((f) => names.add(f.table_name));
+          cached.forEach((c) => names.add(c.local_table));
+          analyses.forEach((a) => names.add(a.result_table));
+          setReservedTableNames(names);
+        } catch (e) {
+          // Non-fatal; we can still import, but suffixing might be less accurate.
+          console.warn('[ImportCSVModal] Failed to load reserved table names:', e);
+          setReservedTableNames(new Set());
+        }
+      })();
     }
+  }, [open, initialFilePath, projectId]);
+
+  const baseFileName = useMemo(() => {
+    if (!filePath) return '';
+    const parts = filePath.split('/').filter(Boolean);
+    const file = parts[parts.length - 1] || '';
+    return file.replace(/\.csv$/i, '');
+  }, [filePath]);
+
+  const toIdentifier = (raw: string) => {
+    let s = raw.toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+    s = s.replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+    if (s && /^[0-9]/.test(s)) s = `_${s}`;
+    return s || 'unnamed';
   };
+
+  const ensureUniqueTableName = (candidate: string) => {
+    const base = toIdentifier(candidate);
+    if (!reservedTableNames.has(base)) return base;
+    let i = 2;
+    while (reservedTableNames.has(`${base}_${i}`)) i += 1;
+    return `${base}_${i}`;
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    if (!filePath) return;
+
+    if (!nameTouched) {
+      setName(baseFileName || 'CSV Dataset');
+    }
+    if (!tableNameTouched) {
+      setTableName(ensureUniqueTableName(baseFileName || 'csv_dataset'));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, filePath, baseFileName, reservedTableNames]);
 
   const handleImport = async () => {
     setError(null);
@@ -86,11 +131,10 @@ export function ImportCSVModal({
       return;
     }
     
-    if (importType === 'new') {
-      if (!name.trim()) {
-        setError('Display name is required');
-        return;
-      }
+    if (!name.trim()) {
+      setError('Display name is required');
+      return;
+    }
     if (!tableName.trim()) {
       setError('Table name is required');
       return;
@@ -98,16 +142,6 @@ export function ImportCSVModal({
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
       setError('Table name must start with a letter or underscore and contain only letters, numbers, and underscores');
       return;
-      }
-    } else {
-      if (!targetTable) {
-        setError('Please select a target table');
-        return;
-      }
-      if (mode === 'merge' && !mergeKeys.trim()) {
-        setError('Merge keys are required for merge mode');
-        return;
-      }
     }
 
     setImporting(true);
@@ -116,22 +150,17 @@ export function ImportCSVModal({
       const request = {
         file_path: filePath.trim(),
         file_type: 'csv' as const,
-        table_name: importType === 'new' ? tableName.trim() : targetTable,
-        name: importType === 'new' ? name.trim() : undefined,
-        description: importType === 'new' ? description.trim() || undefined : undefined,
-        mode: importType === 'new' ? 'replace' as const : mode,
-        target_table: importType === 'existing' ? targetTable : undefined,
-        merge_keys: mode === 'merge' ? mergeKeys.split(',').map(k => k.trim()).filter(Boolean) : undefined,
+        table_name: tableName.trim(),
+        name: name.trim(),
+        description: description.trim() || undefined,
+        overwrite: false, // rely on suffix rule instead of clobbering existing tables
+        mode: 'replace' as const,
       };
       
       console.log('[ImportCSVModal] Importing with:', request);
       const asset = await importFile(projectId, request);
       
-      const modeLabel = importType === 'new' ? 'imported' : mode === 'append' ? 'appended' : 'merged';
-      setSuccessMessage(`Successfully ${modeLabel} ${asset.row_count ?? 0} rows`);
-      
-      // Reset form
-      resetForm();
+      setSuccessMessage(`Successfully imported ${asset.row_count ?? 0} rows`);
       
       // Notify parent and close
       if (onImportSuccess) {
@@ -150,34 +179,18 @@ export function ImportCSVModal({
     }
   };
 
-  const resetForm = () => {
-    setName('');
-    setFilePath('');
-    setTableName('');
-    setDescription('');
-    setImportType('new');
-    setMode('replace');
-    setTargetTable('');
-    setMergeKeys('');
-  };
-
   const handleCancel = () => {
     setError(null);
     setSuccessMessage(null);
-    resetForm();
     onOpenChange(false);
   };
 
-  const handleNameChange = (value: string) => {
-    setName(value);
-    const prefix = value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '');
-    setTableName(prefix);
-  };
-
   const handleBrowse = async () => {
+    if (!isTauriRuntime()) {
+      const manual = window.prompt('Paste the absolute CSV file path:');
+      if (manual) setFilePath(manual);
+      return;
+    }
     try {
       const selected = await openDialog({
         multiple: false,
@@ -201,42 +214,11 @@ export function ImportCSVModal({
         <DialogHeader>
           <DialogTitle>Import CSV File</DialogTitle>
           <DialogDescription>
-            Create a new table or add data to an existing table
+            Create a new Dataset from a CSV file
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4 py-4">
-          {/* Import Type Selection */}
-          <div className="grid gap-2">
-            <label className="text-sm font-medium">Import Type</label>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setImportType('new')}
-                className={`flex-1 flex items-center justify-center gap-2 rounded-lg border-2 p-3 text-sm font-medium transition-colors ${
-                  importType === 'new'
-                    ? 'border-primary bg-primary/5 text-primary'
-                    : 'border-border hover:border-muted-foreground/50'
-                }`}
-              >
-                <Plus className="h-4 w-4" />
-                Create new table
-              </button>
-              <button
-                type="button"
-                onClick={() => setImportType('existing')}
-                className={`flex-1 flex items-center justify-center gap-2 rounded-lg border-2 p-3 text-sm font-medium transition-colors ${
-                  importType === 'existing'
-                    ? 'border-primary bg-primary/5 text-primary'
-                    : 'border-border hover:border-muted-foreground/50'
-                }`}
-              >
-                <Layers className="h-4 w-4" />
-                Add to existing table
-              </button>
-            </div>
-          </div>
-
           {/* File Path - Always shown */}
           <div className="grid gap-2">
             <label htmlFor="file-path" className="text-sm font-medium">
@@ -245,9 +227,12 @@ export function ImportCSVModal({
             <div className="flex gap-2">
               <Input
                 id="file-path"
-                placeholder="/Users/username/data/customers.csv"
+                placeholder="Select a CSV file…"
                 value={filePath}
-                onChange={(e) => setFilePath(e.target.value)}
+                readOnly={isTauriRuntime()}
+                onChange={(e) => {
+                  if (!isTauriRuntime()) setFilePath(e.target.value);
+                }}
                 className="flex-1"
               />
               <Button
@@ -262,31 +247,35 @@ export function ImportCSVModal({
             </div>
           </div>
 
-          {importType === 'new' ? (
-            <>
-              {/* Display Name */}
-              <div className="grid gap-2">
-                <label htmlFor="name" className="text-sm font-medium">
-                  Display Name *
-                </label>
-                <Input
-                  id="name"
-                  placeholder="Customer Data"
-                  value={name}
-                  onChange={(e) => handleNameChange(e.target.value)}
-                />
+          {/* Display Name */}
+          <div className="grid gap-2">
+            <label htmlFor="name" className="text-sm font-medium">
+              Display Name *
+            </label>
+            <Input
+              id="name"
+              placeholder="Customer Data"
+              value={name}
+              onChange={(e) => {
+                setNameTouched(true);
+                setName(e.target.value);
+              }}
+            />
           </div>
 
           {/* Table Name */}
           <div className="grid gap-2">
             <label htmlFor="table-name" className="text-sm font-medium">
-                  Table Name *
+              Table Name *
             </label>
             <Input
               id="table-name"
               placeholder="customers"
               value={tableName}
-              onChange={(e) => setTableName(e.target.value)}
+              onChange={(e) => {
+                setTableNameTouched(true);
+                setTableName(e.target.value);
+              }}
             />
             <p className="text-xs text-muted-foreground">
               Name for the DuckDB table
@@ -305,97 +294,6 @@ export function ImportCSVModal({
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
-            </>
-          ) : (
-            <>
-              {/* Target Table Selection */}
-              <div className="grid gap-2">
-                <label htmlFor="target-table" className="text-sm font-medium">
-                  Target Table *
-            </label>
-                <select
-                  id="target-table"
-                  value={targetTable}
-                  onChange={(e) => setTargetTable(e.target.value)}
-                  className="h-10 rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                >
-                  <option value="">Select a table...</option>
-                  {existingTables.map((table) => (
-                    <option key={table.id} value={table.table_name}>
-                      {table.name} ({table.table_name}) - {table.row_count?.toLocaleString()} rows
-                    </option>
-                  ))}
-                </select>
-                {loadingTables && (
-                  <p className="text-xs text-muted-foreground">Loading tables...</p>
-                )}
-                {!loadingTables && existingTables.length === 0 && (
-                  <p className="text-xs text-muted-foreground">No existing tables found. Create a new table first.</p>
-                )}
-              </div>
-
-              {/* Mode Selection */}
-              <div className="grid gap-2">
-                <label className="text-sm font-medium">Mode</label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setMode('append')}
-                    className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
-                      mode === 'append'
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border hover:bg-muted'
-                    }`}
-                  >
-                    Append
-                    <span className="block text-xs font-normal text-muted-foreground">Add rows</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMode('merge')}
-                    className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
-                      mode === 'merge'
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border hover:bg-muted'
-                    }`}
-                  >
-                    Merge
-                    <span className="block text-xs font-normal text-muted-foreground">Upsert by key</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMode('replace')}
-                    className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
-                      mode === 'replace'
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border hover:bg-muted'
-                    }`}
-                  >
-                    Replace
-                    <span className="block text-xs font-normal text-muted-foreground">Overwrite all</span>
-                  </button>
-                </div>
-          </div>
-
-              {/* Merge Keys - Only for merge mode */}
-              {mode === 'merge' && (
-                <div className="grid gap-2">
-                  <label htmlFor="merge-keys" className="text-sm font-medium">
-                    Merge Keys *
-                  </label>
-                  <Input
-                    id="merge-keys"
-                    placeholder="id, email"
-                    value={mergeKeys}
-                    onChange={(e) => setMergeKeys(e.target.value)}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Column names separated by commas. Rows with matching keys will be updated.
-                  </p>
-                </div>
-              )}
-            </>
-          )}
 
           {/* Error Message */}
           {error && (
@@ -417,7 +315,7 @@ export function ImportCSVModal({
             Cancel
           </Button>
           <Button onClick={handleImport} disabled={importing}>
-            {importing ? 'Importing...' : importType === 'new' ? 'Create Table' : `${mode.charAt(0).toUpperCase() + mode.slice(1)} Data`}
+            {importing ? 'Importing...' : 'Create Dataset'}
           </Button>
         </DialogFooter>
       </DialogContent>
