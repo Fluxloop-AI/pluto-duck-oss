@@ -11,6 +11,8 @@ import {
 } from '../lib/chatApi';
 import { useAgentStream } from './useAgentStream';
 import type { AgentEventAny } from '../types/agent';
+import { flattenTurnsToRenderItems } from '../lib/chatRenderUtils';
+import type { ChatRenderItem } from '../types/chatRenderItem';
 
 const MAX_PREVIEW_LENGTH = 160;
 const MAX_TABS = 10;
@@ -160,6 +162,8 @@ export interface UseMultiTabChatOptions {
   projectId?: string | null;
 }
 
+export type FeedbackType = 'like' | 'dislike' | null;
+
 export function useMultiTabChat({ selectedModel, selectedDataSource, backendReady, projectId }: UseMultiTabChatOptions) {
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
   const [tabs, setTabs] = useState<ChatTab[]>([]);
@@ -168,6 +172,8 @@ export function useMultiTabChat({ selectedModel, selectedDataSource, backendRead
   const lastRunIdRef = useRef<string | null>(null);
   const lastCompletedRunRef = useRef<string | null>(null);
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
+  // Feedback state: messageId -> feedback type (stored locally per session)
+  const [feedbackMap, setFeedbackMap] = useState<Map<string, FeedbackType>>(new Map());
 
   const activeTab = tabs.find(t => t.id === activeTabId) || null;
   const activeTabState = activeTabId ? tabStatesRef.current.get(activeTabId) : null;
@@ -491,6 +497,12 @@ export function useMultiTabChat({ selectedModel, selectedDataSource, backendRead
     result.sort((a, b) => a.seq - b.seq);
     return result;
   }, [activeTabState?.detail, streamEvents, isStreaming, activeRunId]);
+
+  // Convert turns to flat render items for independent rendering
+  const renderItems = useMemo<ChatRenderItem[]>(
+    () => flattenTurnsToRenderItems(turns),
+    [turns]
+  );
 
   // Find last assistant message ID
   const lastAssistantMessageId = useMemo(() => {
@@ -831,6 +843,23 @@ export function useMultiTabChat({ selectedModel, selectedDataSource, backendRead
     [activeTab, loadSessions, projectId],
   );
 
+  const handleFeedback = useCallback((messageId: string, type: 'like' | 'dislike') => {
+    setFeedbackMap(prev => {
+      const newMap = new Map(prev);
+      const currentFeedback = newMap.get(messageId);
+
+      // Toggle: if same feedback type, remove it; otherwise set it
+      if (currentFeedback === type) {
+        newMap.delete(messageId);
+      } else {
+        newMap.set(messageId, type);
+      }
+
+      return newMap;
+    });
+    // TODO: Add API call to persist feedback when backend endpoint is available
+  }, []);
+
   const restoreTabs = useCallback(
     async (savedTabs: Array<{ id: string; order: number }>, savedActiveTabId?: string) => {
       console.log('[MultiTabChat] Restoring tabs', savedTabs, 'active:', savedActiveTabId);
@@ -886,14 +915,15 @@ export function useMultiTabChat({ selectedModel, selectedDataSource, backendRead
   return {
     // Sessions
     sessions,
-    
+
     // Tabs
     tabs,
     activeTabId,
     activeTab,
-    
+
     // Active tab state
     turns,
+    renderItems,
     lastAssistantMessageId,
     loading: activeTabState?.loading || false,
     isStreaming,
@@ -907,8 +937,12 @@ export function useMultiTabChat({ selectedModel, selectedDataSource, backendRead
     handleNewConversation,
     handleSubmit,
     handleDeleteSession,
+    handleFeedback,
     loadSessions,
     restoreTabs,
+
+    // Feedback
+    feedbackMap,
   };
 }
 

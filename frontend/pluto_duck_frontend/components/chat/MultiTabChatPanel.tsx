@@ -33,8 +33,7 @@ export function MultiTabChatPanel({
     tabs,
     activeTabId,
     activeTab,
-    turns,
-    lastAssistantMessageId,
+    renderItems,
     loading,
     isStreaming,
     status,
@@ -44,6 +43,8 @@ export function MultiTabChatPanel({
     switchTab,
     openSessionInTab,
     handleSubmit,
+    handleFeedback,
+    feedbackMap,
     restoreTabs,
   } = useMultiTabChat({
     selectedModel,
@@ -130,8 +131,7 @@ export function MultiTabChatPanel({
           <div className="absolute inset-0 flex flex-col">
             <ChatPanel
               activeSession={null}
-              turns={[]}
-              lastAssistantMessageId={null}
+              renderItems={[]}
               loading={false}
               isStreaming={false}
               status="ready"
@@ -153,22 +153,23 @@ export function MultiTabChatPanel({
               className="absolute inset-0"
             >
               <ChatPanel
-                activeSession={tab.sessionId ? { 
-                  id: tab.sessionId, 
+                activeSession={tab.sessionId ? {
+                  id: tab.sessionId,
                   title: tab.title,
                   status: 'active',
                   created_at: new Date(tab.createdAt).toISOString(),
                   updated_at: new Date(tab.createdAt).toISOString(),
                   last_message_preview: null,
                 } : null}
-                turns={turns}
-                lastAssistantMessageId={lastAssistantMessageId}
+                renderItems={renderItems}
                 loading={loading}
                 isStreaming={isStreaming}
                 status={status}
                 selectedModel={selectedModel}
                 onModelChange={onModelChange}
                 onSubmit={handleSubmit}
+                onFeedback={handleFeedback}
+                feedbackMap={feedbackMap}
                 projectId={projectId || undefined}
               />
             </div>
