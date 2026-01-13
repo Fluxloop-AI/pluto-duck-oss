@@ -13,7 +13,7 @@ import { useAgentStream } from './useAgentStream';
 import type { AgentEventAny } from '../types/agent';
 
 const MAX_PREVIEW_LENGTH = 160;
-const MAX_TABS = 3;
+const MAX_TABS = 10;
 
 export interface ChatTab {
   id: string;

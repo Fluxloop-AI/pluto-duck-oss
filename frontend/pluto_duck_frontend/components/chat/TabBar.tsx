@@ -14,18 +14,16 @@ interface TabBarProps {
   onNewTab: () => void;
   sessions?: ChatSessionSummary[];
   onLoadSession?: (session: ChatSessionSummary) => void;
-  maxTabs?: number;
 }
 
-export function TabBar({ 
-  tabs, 
-  activeTabId, 
-  onTabClick, 
-  onTabClose, 
+export function TabBar({
+  tabs,
+  activeTabId,
+  onTabClick,
+  onTabClose,
   onNewTab,
   sessions = [],
   onLoadSession,
-  maxTabs = 3,
 }: TabBarProps) {
   const [showSessionPopup, setShowSessionPopup] = useState(false);
   const popupRef = useRef<HTMLDivElement>(null);
@@ -56,45 +54,49 @@ export function TabBar({
 
   return (
     <div className="flex items-center gap-1 px-2 pt-3 pb-1 bg-background shrink-0 relative">
-      {tabs.map(tab => (
-        <div
-          key={tab.id}
-          className={cn(
-            'flex items-center justify-center gap-2 px-3 py-1 rounded-t-md text-xs transition-colors cursor-pointer',
-            'max-w-[200px] group relative',
-            activeTabId === tab.id
-              ? 'bg-accent text-accent-foreground'
-              : 'hover:bg-accent/50 text-muted-foreground'
-          )}
-          onClick={() => onTabClick(tab.id)}
-        >
-          <span className="truncate">{tab.title}</span>
+      {/* Scrollable tab area */}
+      <div className="flex items-center gap-1 overflow-x-auto flex-1 min-w-0 scrollbar-thin">
+        {tabs.map(tab => (
           <div
-            onClick={(e) => {
-              e.stopPropagation();
-              onTabClose(tab.id);
-            }}
+            key={tab.id}
             className={cn(
-              'opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity cursor-pointer',
-              'flex items-center justify-center'
+              'flex items-center justify-center gap-0.5 pl-1.5 pr-1 py-1 rounded-md text-xs transition-colors cursor-pointer shrink-0',
+              'max-w-[200px] group relative',
+              activeTabId === tab.id
+                ? 'bg-accent text-accent-foreground'
+                : 'hover:bg-accent/50 text-muted-foreground'
             )}
-            title="Close tab"
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
+            onClick={() => onTabClick(tab.id)}
+          >
+            <span className="truncate">{tab.title}</span>
+            <div
+              onClick={(e) => {
                 e.stopPropagation();
                 onTabClose(tab.id);
-              }
-            }}
-          >
-            <XIcon className="h-3 w-3" />
+              }}
+              className={cn(
+                'opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity cursor-pointer',
+                'flex items-center justify-center'
+              )}
+              title="Close tab"
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onTabClose(tab.id);
+                }
+              }}
+            >
+              <XIcon className="h-3 w-3" />
+            </div>
           </div>
-        </div>
-      ))}
-      
-      {tabs.length < maxTabs && (
+        ))}
+      </div>
+
+      {/* Fixed button area */}
+      <div className="flex items-center gap-1 shrink-0">
         <button
           onClick={onNewTab}
           className="p-1 hover:bg-accent rounded-md transition-colors"
@@ -102,20 +104,19 @@ export function TabBar({
         >
           <PlusIcon className="h-4 w-4" />
         </button>
-      )}
-      
-      {onLoadSession && (
-        <div className="relative">
-          <button
-            ref={buttonRef}
-            onClick={() => setShowSessionPopup(!showSessionPopup)}
-            className="p-1 hover:bg-accent rounded-md transition-colors"
-            title="Load conversation"
-          >
-            <History className="h-4 w-4" />
-          </button>
-          
-          {showSessionPopup && (
+
+        {onLoadSession && (
+          <div className="relative">
+            <button
+              ref={buttonRef}
+              onClick={() => setShowSessionPopup(!showSessionPopup)}
+              className="p-1 hover:bg-accent rounded-md transition-colors"
+              title="Load conversation"
+            >
+              <History className="h-4 w-4" />
+            </button>
+
+            {showSessionPopup && (
             <div
               ref={popupRef}
               className="absolute top-full left-0 mt-1 w-80 max-h-96 overflow-y-auto bg-popover border border-border rounded-md shadow-lg z-50"
@@ -149,8 +150,9 @@ export function TabBar({
               )}
             </div>
           )}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
