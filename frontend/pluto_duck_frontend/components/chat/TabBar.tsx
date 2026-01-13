@@ -55,7 +55,7 @@ export function TabBar({
   };
 
   return (
-    <div className="flex items-center gap-1 border-b border-border px-2 pt-3 pb-1 bg-background shrink-0 relative">
+    <div className="flex items-center gap-1 px-2 pt-3 pb-1 bg-background shrink-0 relative">
       {tabs.map(tab => (
         <div
           key={tab.id}
