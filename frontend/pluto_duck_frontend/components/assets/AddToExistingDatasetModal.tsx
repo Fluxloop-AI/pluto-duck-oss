@@ -41,6 +41,7 @@ export function AddToExistingDatasetModal({
 
   const [targetId, setTargetId] = useState<string>('');
   const [mode, setMode] = useState<Mode>('append');
+  const [skipExactDuplicates, setSkipExactDuplicates] = useState(true);
 
   useEffect(() => {
     if (!open) return;
@@ -48,6 +49,7 @@ export function AddToExistingDatasetModal({
     setSearch('');
     setTargetId('');
     setMode('append');
+    setSkipExactDuplicates(true);
     setIsSubmitting(false);
 
     void (async () => {
@@ -96,6 +98,7 @@ export function AddToExistingDatasetModal({
         mode,
         target_table: mode === 'append' ? selected.table_name : undefined,
         overwrite: mode === 'replace',
+        deduplicate: mode === 'append' ? skipExactDuplicates : false,
       });
 
       onSuccess?.();
@@ -174,6 +177,24 @@ export function AddToExistingDatasetModal({
               Append requires matching columns. Replace overwrites the dataset table.
             </p>
           </div>
+
+          {mode === 'append' && (
+            <div className="flex items-start gap-2 rounded-md border border-border bg-muted/30 p-3">
+              <input
+                id="dedup-exact"
+                type="checkbox"
+                className="mt-0.5"
+                checked={skipExactDuplicates}
+                onChange={(e) => setSkipExactDuplicates(e.target.checked)}
+              />
+              <label htmlFor="dedup-exact" className="text-sm">
+                Skip exact duplicates (same values across all columns)
+                <div className="text-xs text-muted-foreground">
+                  Useful when date ranges overlap and the same rows may be re-imported.
+                </div>
+              </label>
+            </div>
+          )}
 
           {selected && (
             <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">

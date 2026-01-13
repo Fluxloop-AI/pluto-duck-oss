@@ -207,6 +207,7 @@ class FileAssetService:
         mode: Literal["replace", "append", "merge"] = "replace",
         target_table: Optional[str] = None,
         merge_keys: Optional[List[str]] = None,
+        deduplicate: bool = False,
     ) -> FileAsset:
         """Import a file into DuckDB as a table.
 
@@ -220,6 +221,7 @@ class FileAssetService:
             mode: Import mode - "replace", "append", or "merge"
             target_table: Existing table name for append/merge modes
             merge_keys: Column names for merge key (required for merge mode)
+            deduplicate: If True (append only), skip exact duplicate rows that already exist in the target table
 
         Returns:
             Created/Updated FileAsset
@@ -301,7 +303,20 @@ class FileAssetService:
                         # If DESCRIBE fails for any reason, we let DuckDB attempt the insert and surface the error.
                         pass
 
-                    conn.execute(f"INSERT INTO {safe_table} SELECT * FROM {read_expr}")
+                    if deduplicate:
+                        # Skip rows that are exact duplicates of existing rows in the target table.
+                        # This compares the full row (all columns), which is suitable for
+                        # "overlapping date range" re-imports where rows are identical.
+                        conn.execute(
+                            f"""
+                            INSERT INTO {safe_table}
+                            SELECT * FROM (SELECT DISTINCT * FROM {read_expr})
+                            EXCEPT
+                            SELECT * FROM {safe_table}
+                            """
+                        )
+                    else:
+                        conn.execute(f"INSERT INTO {safe_table} SELECT * FROM {read_expr}")
                     
                 elif mode == "merge":
                     # Merge mode: UPSERT using merge keys

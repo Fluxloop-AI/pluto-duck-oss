@@ -667,6 +667,10 @@ class ImportFileRequest(BaseModel):
         None, 
         description="Column names for merge key (required for merge mode)"
     )
+    deduplicate: bool = Field(
+        False,
+        description="When appending, skip rows that are exact duplicates of existing rows in the target table",
+    )
 
 
 class FileAssetResponse(BaseModel):
@@ -751,6 +755,7 @@ def import_file(
             mode=request.mode,
             target_table=request.target_table,
             merge_keys=request.merge_keys,
+            deduplicate=request.deduplicate,
         )
         return _file_asset_to_response(asset)
     except AssetValidationError as e:

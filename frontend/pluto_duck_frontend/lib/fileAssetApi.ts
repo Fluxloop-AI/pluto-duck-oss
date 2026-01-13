@@ -39,6 +39,7 @@ export interface ImportFileRequest {
   mode?: ImportMode;
   target_table?: string;
   merge_keys?: string[];
+  deduplicate?: boolean;
 }
 
 export interface FileSchema {
