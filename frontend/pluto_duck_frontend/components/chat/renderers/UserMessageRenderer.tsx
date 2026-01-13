@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useState } from 'react';
-import { CopyIcon, CheckIcon, PencilIcon } from 'lucide-react';
+import { CopyIcon, CheckIcon } from 'lucide-react';
 import { Actions, Action } from '../../ai-elements/actions';
 import type { UserMessageItem } from '../../../types/chatRenderItem';
 
@@ -40,7 +40,6 @@ export interface UserMessageRendererProps {
 
 export const UserMessageRenderer = memo(function UserMessageRenderer({
   item,
-  onEdit,
   onCopy,
 }: UserMessageRendererProps) {
   const [copied, setCopied] = useState(false);
@@ -55,27 +54,18 @@ export const UserMessageRenderer = memo(function UserMessageRenderer({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleEdit = () => {
-    onEdit?.(item.messageId, item.content);
-  };
-
   return (
-    <div className="group flex justify-end gap-2">
-      <Actions className="opacity-0 transition-opacity group-hover:opacity-100 self-center">
-        {onEdit && (
-          <Action onClick={handleEdit} tooltip="Edit message">
-            <PencilIcon className="size-3" />
-          </Action>
-        )}
-        <Action onClick={handleCopy} tooltip={copied ? 'Copied!' : 'Copy message'}>
-          {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
-        </Action>
-      </Actions>
-      <div className="rounded-2xl bg-primary px-4 py-3 text-primary-foreground max-w-[80%]">
+    <div className="group flex flex-col items-end gap-1">
+      <div className="rounded-xl bg-muted px-4 py-2.5 text-foreground max-w-[80%]">
         <p className="text-sm whitespace-pre-wrap">
           {renderTextWithMentions(item.content)}
         </p>
       </div>
+      <Actions className="opacity-0 transition-opacity group-hover:opacity-100 mr-2">
+        <Action onClick={handleCopy} tooltip={copied ? 'Copied' : 'Copy'} className="size-6 p-1 text-muted-foreground/50 hover:text-muted-foreground">
+          {copied ? <CheckIcon className="size-2.5" strokeWidth={1.5} /> : <CopyIcon className="size-2.5" strokeWidth={1.5} />}
+        </Action>
+      </Actions>
     </div>
   );
 });

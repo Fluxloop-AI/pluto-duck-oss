@@ -96,9 +96,9 @@ const ConversationMessages = memo(function ConversationMessages({
           <div
             key={item.id}
             className={cn(
-              'group pl-[14px] pr-3',
+              'group pl-[14px] pr-1',
               isLastOfRun ? 'pb-6' : 'pb-2',
-              idx === 0 ? 'pt-6' : 'pt-0'
+              'pt-0'
             )}
           >
             <RenderItem
@@ -236,7 +236,7 @@ export function ChatPanel({
 
       {/* Input area */}
       <div className="shrink-0">
-        <div className="w-full px-3 pb-4">
+        <div className="w-full px-4 pb-4">
           <PromptInput onSubmit={handleSubmit}>
             <PromptInputBody>
               <PromptInputTextarea
