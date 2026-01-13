@@ -4,8 +4,7 @@
 Chat with your data, build pipelines, and manage analytics assets—all on your local machine.
 
 <p align="center">
-  <img src="docs/screen1.png" alt="Chat Interface" width="45%" />
-  <img src="docs/screen2.png" alt="Data Sources" width="45%" />
+  <img src="docs/screenshot.png" alt="Pluto Duck Screenshot" width="80%" />
 </p>
 
 ## 🌟 Product Vision
