@@ -124,7 +124,58 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         with:
           projectPath: tauri-shell
-          args: --target ${{ matrix.target }}
+          # Build the .app bundle (and .app.tar.gz for updater), but do NOT build the DMG yet.
+          # We'll re-sign the in-bundle updater payload, then create+notarize the DMG ourselves.
+          args: --target ${{ matrix.target }} --bundles app
+
+      - name: Re-sign in-app updater payload (fix notarization)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          IDENTITY="${{ secrets.APPLE_SIGNING_IDENTITY }}"
+          if [ -z "${IDENTITY}" ]; then
+            echo "ERROR: Missing GitHub Secret: APPLE_SIGNING_IDENTITY"
+            exit 1
+          fi
+
+          APP_PATH="tauri-shell/src-tauri/target/${{ matrix.target }}/release/bundle/macos/Pluto Duck.app"
+          UP_PAYLOAD_DIR="${APP_PATH}/Contents/Resources/_up_/_up_/dist/pluto-duck-backend"
+          echo "App path: ${APP_PATH}"
+          echo "Updater payload dir: ${UP_PAYLOAD_DIR}"
+          if [ ! -d "${UP_PAYLOAD_DIR}" ]; then
+            echo "ERROR: updater payload dir not found (unexpected): ${UP_PAYLOAD_DIR}"
+            exit 1
+          fi
+
+          # Remove extended attributes that can interfere with signing.
+          xattr -cr "${UP_PAYLOAD_DIR}" 2>/dev/null || true
+
+          # Sign all Mach-O files in the in-app payload (dylibs, python extensions, executables).
+          /usr/bin/find "${UP_PAYLOAD_DIR}" -type f -print0 | while IFS= read -r -d '' file; do
+            if file -b "${file}" | grep -q "Mach-O"; then
+              echo "codesign ${file}"
+              codesign --force --options runtime --sign "${IDENTITY}" --timestamp "${file}"
+            fi
+          done
+
+          # Re-sign the app bundle after nested payload signing.
+          echo "Re-signing app bundle..."
+          codesign --force --options runtime --sign "${IDENTITY}" --timestamp "${APP_PATH}"
+          codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
+
+      - name: Create DMG from signed app
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          APP_PATH="tauri-shell/src-tauri/target/${{ matrix.target }}/release/bundle/macos/Pluto Duck.app"
+          DMG_DIR="tauri-shell/src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
+          mkdir -p "${DMG_DIR}"
+          DMG_PATH="${DMG_DIR}/Pluto Duck_${VERSION}_${{ matrix.arch }}.dmg"
+          echo "Creating DMG: ${DMG_PATH}"
+          rm -f "${DMG_PATH}"
+          hdiutil create -volname "Pluto Duck" -srcfolder "${APP_PATH}" -ov -format UDZO "${DMG_PATH}"
 
       - name: Notarize DMG (macOS)
         if: runner.os == 'macOS'
