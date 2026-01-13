@@ -431,7 +431,7 @@ export default function WorkspacePage() {
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden bg-muted">
         {!sidebarCollapsed && (
           <aside className="hidden w-64 border-r border-muted bg-muted transition-all duration-300 lg:flex lg:flex-col">
             <div className="px-3 pt-3 pb-3">
@@ -511,51 +511,54 @@ export default function WorkspacePage() {
           </aside>
         )}
 
-        <div className="relative flex flex-1 flex-col overflow-hidden bg-muted/5">
-          {defaultProjectId ? (
-            mainView === 'boards' ? (
-            <BoardsView projectId={defaultProjectId} activeBoard={activeBoard} />
+        {/* Main Content Wrapper - Board + Chat with rounded corners */}
+        <div className={`flex flex-1 overflow-hidden rounded-[10px] bg-background m-2 border border-black/10 ${sidebarCollapsed ? '' : 'ml-0'}`}>
+          <div className="relative flex flex-1 flex-col overflow-hidden">
+            {defaultProjectId ? (
+              mainView === 'boards' ? (
+                <BoardsView projectId={defaultProjectId} activeBoard={activeBoard} />
+              ) : (
+                <AssetListView projectId={defaultProjectId} initialTab={assetInitialTab} refreshTrigger={dataSourcesRefresh} />
+              )
             ) : (
-              <AssetListView projectId={defaultProjectId} initialTab={assetInitialTab} refreshTrigger={dataSourcesRefresh} />
-            )
-          ) : (
-            <div className="flex h-full items-center justify-center">
-              <Loader />
+              <div className="flex h-full items-center justify-center">
+                <Loader />
+              </div>
+            )}
+          </div>
+
+          {!chatPanelCollapsed && (
+            <div
+              className="hidden lg:flex relative"
+              style={{ width: `${chatPanelWidth}px` }}
+            >
+              {/* Resize Handle */}
+              <div
+                onMouseDown={handleMouseDown}
+                className="absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize hover:bg-primary/50 transition-colors z-10 group"
+                style={{
+                  left: '-1px',
+                }}
+              >
+                <div className="absolute inset-y-0 -left-1 -right-1 group-hover:bg-primary/10" />
+              </div>
+
+              <MultiTabChatPanel
+                selectedModel={selectedModel}
+                onModelChange={setSelectedModel}
+                selectedDataSource={selectedDataSource}
+                backendReady={backendReady}
+                projectId={defaultProjectId}
+                onTabsChange={(tabs, activeId) => {
+                  setChatTabs(tabs);
+                  setActiveChatTabId(activeId);
+                }}
+                savedTabs={currentProject?.settings?.ui_state?.chat?.open_tabs}
+                savedActiveTabId={currentProject?.settings?.ui_state?.chat?.active_tab_id}
+              />
             </div>
           )}
         </div>
-
-        {!chatPanelCollapsed && (
-          <div 
-            className="hidden lg:flex relative"
-            style={{ width: `${chatPanelWidth}px` }}
-          >
-            {/* Resize Handle */}
-            <div
-              onMouseDown={handleMouseDown}
-              className="absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize hover:bg-primary/50 transition-colors z-10 group"
-              style={{ 
-                left: '-1px',
-              }}
-            >
-              <div className="absolute inset-y-0 -left-1 -right-1 group-hover:bg-primary/10" />
-            </div>
-            
-            <MultiTabChatPanel
-              selectedModel={selectedModel}
-              onModelChange={setSelectedModel}
-              selectedDataSource={selectedDataSource}
-              backendReady={backendReady}
-              projectId={defaultProjectId}
-              onTabsChange={(tabs, activeId) => {
-                setChatTabs(tabs);
-                setActiveChatTabId(activeId);
-              }}
-              savedTabs={currentProject?.settings?.ui_state?.chat?.open_tabs}
-              savedActiveTabId={currentProject?.settings?.ui_state?.chat?.active_tab_id}
-            />
-          </div>
-        )}
       </div>
 
       <SettingsModal
