@@ -223,32 +223,29 @@ function useAutoUpdateInternal({
     if (!initialized || !enabled || !listen) return;
 
     const listenFn = listen; // Capture non-null reference
-    
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+
     const setupListener = async () => {
-      const unlisten = await listenFn<string>('update-available', async (event) => {
+      unlisten = await listenFn<string>('update-available', async (event) => {
         const version = event.payload;
         console.log(`Update available: ${version}`);
         setUpdateAvailable(version);
       });
 
-      return unlisten;
+      // If cleanup was called while we were setting up, unlisten immediately
+      if (cancelled && unlisten) {
+        unlisten();
+      }
     };
 
-    const unlistenPromise = setupListener();
+    setupListener();
 
     return () => {
-      // React StrictMode / fast refresh can trigger cleanup multiple times.
-      // Also, Tauri's internal listener registry can be cleared during reload.
-      // Guard and swallow unregister errors to avoid crashing the UI.
-      unlistenPromise
-        .then((unlisten) => {
-          try {
-            unlisten();
-          } catch (e) {
-            console.warn('Failed to unlisten update-available:', e);
-          }
-        })
-        .catch((e) => console.warn('Failed to setup/unlisten update-available listener:', e));
+      cancelled = true;
+      if (unlisten) {
+        unlisten();
+      }
     };
   }, [initialized, enabled]);
 
