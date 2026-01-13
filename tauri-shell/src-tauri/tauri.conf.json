@@ -10,6 +10,17 @@
     "beforeBuildCommand": "bash ../scripts/tauri-before-build.sh"
   },
   "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Pluto Duck",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "dragDropEnabled": false
+      }
+    ],
     "security": {
       "csp": null
     }
