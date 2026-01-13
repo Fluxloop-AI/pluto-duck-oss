@@ -21,7 +21,10 @@ pub fn run() {
         )?;
       }
       
-      if app.get_webview_window("main").is_none() {
+      // Get or create main window
+      let window = if let Some(existing) = app.get_webview_window("main") {
+        existing
+      } else {
         let mut window_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
           .title("Pluto Duck")
           .inner_size(1400.0, 900.0)
@@ -34,31 +37,35 @@ pub fn run() {
             .title_bar_style(TitleBarStyle::Overlay);
         }
 
-        let window = window_builder.build()?;
+        window_builder.build()?
+      };
 
-        #[cfg(target_os = "macos")]
-        {
-          use cocoa::appkit::{NSColor, NSWindow, NSWindowTitleVisibility};
-          use cocoa::base::{id, nil, NO, YES};
+      // Apply macOS native titlebar customizations
+      #[cfg(target_os = "macos")]
+      {
+        use cocoa::appkit::{NSColor, NSWindow, NSWindowTitleVisibility};
+        use cocoa::base::{id, nil, NO, YES};
 
-          if let Ok(ns_window) = window.ns_window() {
-            let ns_window = ns_window as id;
-            unsafe {
-              ns_window.setTitlebarAppearsTransparent_(YES);
-              ns_window.setOpaque_(NO);
-              ns_window.setBackgroundColor_(NSColor::clearColor(nil));
-              ns_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
-            }
-          }
-
-          // Ensure the system knows our desired titlebar height without per-resize tweaking
-          #[allow(unused_must_use)]
-          {
-            apply_titlebar_accessory(&window, 40.0);
-            // apply_unified_toolbar(&window);  // 방법 2: Toolbar 제거로 separator 해결 시도
+        if let Ok(ns_window) = window.ns_window() {
+          let ns_window = ns_window as id;
+          unsafe {
+            ns_window.setTitlebarAppearsTransparent_(YES);
+            ns_window.setOpaque_(NO);
+            ns_window.setBackgroundColor_(NSColor::clearColor(nil));
+            ns_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
           }
         }
+
+        // Ensure the system knows our desired titlebar height without per-resize tweaking
+        #[allow(unused_must_use)]
+        {
+          apply_titlebar_accessory(&window, 40.0);
+          // apply_unified_toolbar(&window);  // 방법 2: Toolbar 제거로 separator 해결 시도
+        }
       }
+
+      // Suppress unused variable warning on non-macOS
+      let _ = &window;
 
       // Handle window close event (hide instead of quit) for all windows
       for (_, window) in app.webview_windows() {

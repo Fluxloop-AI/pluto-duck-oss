@@ -14,10 +14,13 @@
       {
         "label": "main",
         "title": "Pluto Duck",
-        "width": 1200,
-        "height": 800,
+        "width": 1400,
+        "height": 900,
         "minWidth": 800,
         "minHeight": 600,
+        "resizable": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
         "dragDropEnabled": false
       }
     ],
