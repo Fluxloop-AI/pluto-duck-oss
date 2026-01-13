@@ -152,15 +152,7 @@ jobs:
           export SUBMIT_JSON
 
           echo "${SUBMIT_JSON}"
-          SUBMISSION_ID="$(python - <<'PY'
-import json, os, sys
-s = os.environ.get("SUBMIT_JSON", "")
-try:
-  print(json.loads(s).get("id", ""))
-except Exception:
-  print("")
-PY
-          )"
+          SUBMISSION_ID="$(python -c "import json, os; from contextlib import suppress; obj={}; with suppress(Exception): obj=json.loads(os.environ.get('SUBMIT_JSON','{}')); print(obj.get('id',''))")"
           if [ -z "${SUBMISSION_ID}" ]; then
             echo "ERROR: Could not parse submission id from notarytool output"
             exit 1
@@ -189,15 +181,7 @@ PY
               --output-format json || true)"
             export INFO_JSON
 
-            STATUS="$(python - <<'PY'
-import json, os
-s = os.environ.get("INFO_JSON", "")
-try:
-  print(json.loads(s).get("status", ""))
-except Exception:
-  print("")
-PY
-            )"
+            STATUS="$(python -c "import json, os; from contextlib import suppress; obj={}; with suppress(Exception): obj=json.loads(os.environ.get('INFO_JSON','{}')); print(obj.get('status',''))")"
             if [ -z "${STATUS}" ]; then
               STATUS="In Progress"
             fi
