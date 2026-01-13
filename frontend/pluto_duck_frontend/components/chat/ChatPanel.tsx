@@ -486,7 +486,7 @@ export function ChatPanel({
       </div>
 
       {/* Input area */}
-      <div className="shrink-0 pt-4">
+      <div className="shrink-0">
         <div className="w-full px-3 pb-4">
           <PromptInput onSubmit={handleSubmit}>
             <PromptInputBody>
