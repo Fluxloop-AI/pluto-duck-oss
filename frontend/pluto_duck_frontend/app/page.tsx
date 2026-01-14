@@ -56,7 +56,7 @@ export default function WorkspacePage() {
   const [chatPanelCollapsed, setChatPanelCollapsed] = useState(false);
   const [mainView, setMainView] = useState<MainView>('boards');
   const [assetInitialTab, setAssetInitialTab] = useState<'analyses' | 'datasources'>('analyses');
-  const [chatPanelWidth, setChatPanelWidth] = useState(340);
+  const [chatPanelWidth, setChatPanelWidth] = useState(380);
   const [chatTabs, setChatTabs] = useState<ChatTab[]>([]);
   const [activeChatTabId, setActiveChatTabId] = useState<string | null>(null);
   const [isResizing, setIsResizing] = useState(false);
