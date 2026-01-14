@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { PlusIcon, SettingsIcon, DatabaseIcon, PanelLeftClose, PanelLeftOpen, SquarePen, LayoutDashboard, PanelRightClose, PanelRightOpen, Package } from 'lucide-react';
+import { PlusIcon, SettingsIcon, DatabaseIcon, PanelLeftClose, PanelLeftOpen, SquarePen, Layers, PanelRightClose, PanelRightOpen, Package } from 'lucide-react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { isTauriRuntime } from '../lib/tauriRuntime';
 
@@ -455,25 +455,31 @@ export default function WorkspacePage() {
 
             <div className="flex-1 overflow-y-auto px-3 py-3">
               {/* View Tabs */}
-              <div className="mb-3 flex rounded-lg border border-border bg-card p-1">
+              <div className="relative mb-3 flex rounded-lg bg-card p-1">
+                {/* Sliding indicator */}
+                <div
+                  className={`absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-md bg-primary transition-all duration-200 ease-out ${
+                    mainView === 'boards' ? 'left-1' : 'left-[50%]'
+                  }`}
+                />
                 <button
                   type="button"
                   onClick={() => setMainView('boards')}
-                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                  className={`relative z-10 flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-colors duration-200 ${
                     mainView === 'boards'
-                      ? 'bg-primary text-primary-foreground'
+                      ? 'text-primary-foreground'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  <LayoutDashboard className="h-3.5 w-3.5" />
+                  <Layers className="h-3.5 w-3.5" />
                   Boards
                 </button>
                 <button
                   type="button"
                   onClick={() => setMainView('assets')}
-                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                  className={`relative z-10 flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-colors duration-200 ${
                     mainView === 'assets'
-                      ? 'bg-primary text-primary-foreground'
+                      ? 'text-primary-foreground'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
