@@ -598,13 +598,16 @@ export function AssetEmbedComponent({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* Header - Always visible unless hideHeader is true (but show on hover/select for accessibility) */}
-      {(!config.hideHeader || showUI) && (
-        <div
-          className={`flex items-center justify-between px-3 py-1.5 border-b bg-muted/20 transition-all duration-200 border-border/40 ${
-            config.hideHeader && showUI ? 'opacity-70' : 'opacity-100'
-          }`}
-        >
+      {/* Header - Always rendered to maintain consistent height, opacity controlled by hideHeader */}
+      <div
+        className={`flex items-center justify-between px-3 py-1.5 border-b bg-muted/20 transition-all duration-200 ${
+          config.hideHeader
+            ? showUI
+              ? 'opacity-70 border-border/20'
+              : 'opacity-0 border-transparent'
+            : 'opacity-100 border-border/40'
+        }`}
+      >
           <div className="flex items-center gap-1.5 text-muted-foreground">
             <span className="text-xs">
               {config.displayType === 'table' ? '📋' : '📊'}
@@ -690,7 +693,6 @@ export function AssetEmbedComponent({
             </DropdownMenu>
           </div>
         </div>
-      )}
 
       {/* Content */}
       <div className="p-3 not-prose">
