@@ -93,7 +93,11 @@ const x64Sig =
   findFile('_x64.app.tar.gz.sig');
 
 const aarch64Dmg = findFile('.dmg', 'tauri-aarch64') || findFile('aarch64.dmg') || findFile('_aarch64.dmg');
-const x64Dmg = findFile('.dmg', 'tauri-x86_64') || findFile('x64.dmg') || findFile('_x64.dmg');
+const x64Dmg =
+  findFile('.dmg', 'tauri-x86_64') ||
+  findFile('x64.dmg') ||
+  findFile('_x64.dmg') ||
+  findFile('_x86_64.dmg');
 
 // Fallback: find any .app.tar.gz if specific ones not found
 const genericTarGz = findFile('.app.tar.gz');

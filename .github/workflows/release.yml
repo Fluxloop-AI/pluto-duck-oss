@@ -172,7 +172,8 @@ jobs:
           APP_PATH="tauri-shell/src-tauri/target/${{ matrix.target }}/release/bundle/macos/Pluto Duck.app"
           DMG_DIR="tauri-shell/src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
           mkdir -p "${DMG_DIR}"
-          DMG_PATH="${DMG_DIR}/Pluto Duck_${VERSION}_${{ matrix.arch }}.dmg"
+          # IMPORTANT: keep filenames stable and URL-friendly (avoid spaces).
+          DMG_PATH="${DMG_DIR}/Pluto.Duck_${VERSION}_${{ matrix.arch }}.dmg"
           echo "Creating DMG: ${DMG_PATH}"
           rm -f "${DMG_PATH}"
           hdiutil create -volname "Pluto Duck" -srcfolder "${APP_PATH}" -ov -format UDZO "${DMG_PATH}"
@@ -318,13 +319,14 @@ jobs:
           VERSION="${TAG#v}"
           mkdir -p release-assets
           # macos tar.gz + sig (per arch)
-          cp "artifacts/tauri-aarch64/macos/"*.app.tar.gz "release-assets/Pluto Duck_${VERSION}_aarch64.app.tar.gz"
-          cp "artifacts/tauri-x86_64/macos/"*.app.tar.gz "release-assets/Pluto Duck_${VERSION}_x64.app.tar.gz"
+          # IMPORTANT: keep filenames stable and URL-friendly (avoid spaces).
+          cp "artifacts/tauri-aarch64/macos/"*.app.tar.gz "release-assets/Pluto.Duck_${VERSION}_aarch64.app.tar.gz"
+          cp "artifacts/tauri-x86_64/macos/"*.app.tar.gz "release-assets/Pluto.Duck_${VERSION}_x64.app.tar.gz"
           if ls artifacts/tauri-aarch64/macos/*.app.tar.gz.sig >/dev/null 2>&1; then
-            cp "artifacts/tauri-aarch64/macos/"*.app.tar.gz.sig "release-assets/Pluto Duck_${VERSION}_aarch64.app.tar.gz.sig"
+            cp "artifacts/tauri-aarch64/macos/"*.app.tar.gz.sig "release-assets/Pluto.Duck_${VERSION}_aarch64.app.tar.gz.sig"
           fi
           if ls artifacts/tauri-x86_64/macos/*.app.tar.gz.sig >/dev/null 2>&1; then
-            cp "artifacts/tauri-x86_64/macos/"*.app.tar.gz.sig "release-assets/Pluto Duck_${VERSION}_x64.app.tar.gz.sig"
+            cp "artifacts/tauri-x86_64/macos/"*.app.tar.gz.sig "release-assets/Pluto.Duck_${VERSION}_x64.app.tar.gz.sig"
           fi
           # DMGs (already unique)
           cp artifacts/tauri-aarch64/dmg/*.dmg release-assets/

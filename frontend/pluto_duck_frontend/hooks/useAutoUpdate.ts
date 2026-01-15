@@ -1,4 +1,4 @@
-import { createContext, createElement, useContext, useEffect, useCallback, useState, type ReactNode } from 'react';
+import { createContext, createElement, useContext, useEffect, useCallback, useRef, useState, type ReactNode } from 'react';
 
 // Lazy imports for Tauri plugins (only available in Tauri environment)
 let check: typeof import('@tauri-apps/plugin-updater').check | null = null;
@@ -85,6 +85,7 @@ function useAutoUpdateInternal({
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [autoDownload, setAutoDownloadState] = useState(true);
+  const downloadInFlightRef = useRef<Promise<void> | null>(null);
 
   // Load autoDownload preference from localStorage
   useEffect(() => {
@@ -126,15 +127,21 @@ function useAutoUpdateInternal({
       return;
     }
 
+    // Prevent concurrent downloads (can happen due to multiple triggers).
+    if (downloadInFlightRef.current) {
+      return await downloadInFlightRef.current;
+    }
+
+    const run = (async () => {
     try {
       setDownloading(true);
       setError(null);
-      setProgress(0);
+      setProgress((prev) => (prev > 0 ? prev : 0));
 
       const update = await check();
       if (update?.available) {
         // Simple progress indicator (indeterminate since we don't have total size)
-        setProgress(10);
+        setProgress((prev) => Math.max(prev, 10));
         await update.downloadAndInstall((event) => {
           if (event.event === 'Progress') {
             // Increment progress gradually
@@ -150,6 +157,14 @@ function useAutoUpdateInternal({
       setError(e instanceof Error ? e.message : 'Download failed');
     } finally {
       setDownloading(false);
+    }
+    })();
+
+    downloadInFlightRef.current = run;
+    try {
+      await run;
+    } finally {
+      downloadInFlightRef.current = null;
     }
   }, []);
 
@@ -201,10 +216,6 @@ function useAutoUpdateInternal({
         const version = event.payload;
         console.log(`Update available: ${version}`);
         setUpdateAvailable(version);
-
-        if (autoDownload && !downloading && !readyToRestart) {
-          await downloadUpdate();
-        }
       });
 
       return unlisten;
@@ -213,9 +224,20 @@ function useAutoUpdateInternal({
     const unlistenPromise = setupListener();
 
     return () => {
-      unlistenPromise.then((unlisten) => unlisten());
+      // React StrictMode / fast refresh can trigger cleanup multiple times.
+      // Also, Tauri's internal listener registry can be cleared during reload.
+      // Guard and swallow unregister errors to avoid crashing the UI.
+      unlistenPromise
+        .then((unlisten) => {
+          try {
+            unlisten();
+          } catch (e) {
+            console.warn('Failed to unlisten update-available:', e);
+          }
+        })
+        .catch((e) => console.warn('Failed to setup/unlisten update-available listener:', e));
     };
-  }, [initialized, enabled, autoDownload, downloading, readyToRestart, downloadUpdate]);
+  }, [initialized, enabled]);
 
   // Automatic check on startup + focus/visibility changes (debounced)
   const maybeAutoCheck = useCallback(async () => {
