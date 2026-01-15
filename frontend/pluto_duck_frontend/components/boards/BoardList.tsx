@@ -9,14 +9,13 @@ interface BoardListProps {
   activeId?: string;
   onSelect: (board: Board) => void;
   onDelete?: (board: Board) => void;
-  // Optional props to handle new interface calls if needed, but we keep it minimal for now to fix build
-  // If the parent passes onUpdate or onCreate, we can add them here as optional
   onUpdate?: (boardId: string, data: any) => void;
   onCreate?: () => void;
 }
 
 export function BoardList({ boards, activeId, onSelect, onDelete }: BoardListProps) {
   const [tick, setTick] = useState(0);
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
 
   // Update relative times every minute
   useEffect(() => {
@@ -57,45 +56,103 @@ export function BoardList({ boards, activeId, onSelect, onDelete }: BoardListPro
     });
   };
 
-  return (
-    <div className="space-y-1">
-      {boards.map((board) => (
-        <div
-          key={board.id}
-          className={`
-            group relative flex items-start gap-2 rounded-lg px-2 py-2 text-sm cursor-pointer transition-colors
-            ${
-              activeId === board.id
-                ? 'bg-primary/10 text-primary'
-                : 'text-foreground hover:bg-accent'
-            }
-          `}
-          onClick={() => onSelect(board)}
-        >
-          <div className="flex-1 min-w-0">
-            <p className={`truncate ${activeId === board.id ? 'font-medium' : 'font-normal'}`}>
-              {board.name}
-            </p>
-            <p className="truncate text-xs text-muted-foreground">
-              {formatRelativeTime(board.updated_at)}
-            </p>
-          </div>
+  // Extract preview text from Lexical JSON content
+  const getPreviewText = (board: Board): string | null => {
+    try {
+      const content = board.settings?.tabs?.[0]?.content;
+      if (!content) return null;
 
-          {onDelete && boards.length > 1 && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                if (confirm(`Delete board "${board.name}"?`)) {
-                  onDelete(board);
-                }
-              }}
-              className="opacity-0 group-hover:opacity-100 flex h-5 w-5 items-center justify-center rounded hover:bg-destructive/10 hover:text-destructive transition-opacity shrink-0"
-              title="Delete board"
-            >
-              <TrashIcon className="h-3 w-3" />
-            </button>
-          )}
-        </div>
+      const parsed = JSON.parse(content);
+      const texts: string[] = [];
+
+      // Recursively extract text from Lexical nodes
+      const extractText = (node: any) => {
+        if (node.text) {
+          texts.push(node.text);
+        }
+        if (node.children) {
+          for (const child of node.children) {
+            extractText(child);
+          }
+        }
+      };
+
+      extractText(parsed.root);
+      const preview = texts.join(' ').trim();
+      return preview || null;
+    } catch {
+      return null;
+    }
+  };
+
+  return (
+    <div className="space-y-1 pl-0.5">
+      {boards.map((board) => (
+        confirmingDeleteId === board.id ? (
+          // Inline delete confirmation UI
+          <div
+            key={board.id}
+            className="flex items-center justify-between gap-2 rounded-lg bg-destructive/10 px-2.5 py-2 text-sm"
+          >
+            <span className="text-destructive text-xs font-medium truncate">Delete?</span>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => setConfirmingDeleteId(null)}
+                className="px-2 py-1 text-xs rounded hover:bg-background transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  onDelete?.(board);
+                  setConfirmingDeleteId(null);
+                }}
+                className="px-2 py-1 text-xs rounded bg-destructive text-destructive-foreground hover:bg-destructive/90 transition"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        ) : (
+          // Normal board item
+          <div
+            key={board.id}
+            className={`
+              group relative flex items-start gap-2 rounded-lg px-2.5 py-2.5 text-sm cursor-pointer transition-colors
+              ${
+                activeId === board.id
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-foreground hover:bg-accent'
+              }
+            `}
+            onClick={() => onSelect(board)}
+          >
+            <div className="flex-1 min-w-0">
+              <p className={`truncate ${activeId === board.id ? 'font-medium' : 'font-normal'}`}>
+                {board.name}
+              </p>
+              <p className="truncate text-xs text-muted-foreground">
+                {formatRelativeTime(board.updated_at)}
+                {board.description && (
+                  <span className="ml-2">{board.description}</span>
+                )}
+              </p>
+            </div>
+
+            {onDelete && boards.length > 1 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConfirmingDeleteId(board.id);
+                }}
+                className="opacity-0 group-hover:opacity-100 flex h-5 w-5 items-center justify-center rounded hover:bg-destructive/10 hover:text-destructive transition-opacity shrink-0"
+                title="Delete board"
+              >
+                <TrashIcon className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        )
       ))}
     </div>
   );

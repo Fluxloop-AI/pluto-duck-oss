@@ -27,19 +27,23 @@ export function useBoards({ projectId, enabled = true }: UseBoardsOptions) {
     setError(null);
     try {
       const data = await fetchBoards(projectId);
-      setBoards(data);
-      
-      // Auto-select first board if available
-      // Note: We always select first board here because activeBoard is reset 
+      // Sort by updated_at descending (most recent first)
+      const sortedData = [...data].sort((a, b) =>
+        new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      );
+      setBoards(sortedData);
+
+      // Auto-select first board if available (most recently updated)
+      // Note: We always select first board here because activeBoard is reset
       // to null when projectId changes (in the separate useEffect)
-      if (data.length > 0) {
-        // Fetch detail for the first board
+      if (sortedData.length > 0) {
+        // Fetch detail for the first board (most recently updated)
         try {
-          const detail = await fetchBoardDetail(data[0].id);
+          const detail = await fetchBoardDetail(sortedData[0].id);
           setActiveBoard(detail);
         } catch (e) {
           console.error("Failed to load initial active board detail", e);
-          setActiveBoard(data[0]);
+          setActiveBoard(sortedData[0]);
         }
       }
       // If data.length === 0, activeBoard is already null from the reset effect
@@ -56,7 +60,8 @@ export function useBoards({ projectId, enabled = true }: UseBoardsOptions) {
 
     try {
       const newBoard = await createBoardApi(projectId, { name, description });
-      setBoards(prev => [...prev, newBoard]);
+      // Add new board at the beginning (most recent first)
+      setBoards(prev => [newBoard, ...prev]);
       setActiveBoard(newBoard);
       return newBoard;
     } catch (err) {
