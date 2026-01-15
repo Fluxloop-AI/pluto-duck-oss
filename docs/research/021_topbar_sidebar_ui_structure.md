@@ -2,7 +2,7 @@
 date: 2026-01-15T00:00:00+09:00
 researcher: Claude
 topic: "상단바와 사이드 패널 UI 구조 분석"
-tags: [research, frontend, header, sidebar, tauri, custom-titlebar]
+tags: [research, frontend, header, sidebar, tauri, custom-titlebar, traffic-lights, macos]
 status: complete
 ---
 
@@ -212,6 +212,124 @@ const maxWidth = 800;
 
 ---
 
+### 7. macOS Traffic Lights 위치 조정
+
+#### 현재 상태
+
+현재 traffic lights는 macOS 기본 위치(상단에 붙어있음)로 표시됩니다. [lib.rs:62](tauri-shell/src-tauri/src/lib.rs#L62)에서 `apply_titlebar_accessory`로 타이틀바 높이(40px)만 조정했고, **traffic lights 위치는 설정하지 않았습니다**.
+
+```
+현재 (as-is)                        목표 (to-be)
+┌─────────────────────┐            ┌─────────────────────┐
+│● ● ●  (상단 고정)   │            │                     │
+│                     │     →      │ ● ● ●  (수직 중앙)  │
+│                     │            │                     │
+└─────────────────────┘            └─────────────────────┘
+```
+
+#### 위치 조정 방법
+
+**방법 1: Tauri 네이티브 API (권장)**
+
+[lib.rs:35-37](tauri-shell/src-tauri/src/lib.rs#L35-L37)에서 `traffic_light_position` 추가:
+
+```rust
+use tauri::LogicalPosition;
+
+#[cfg(target_os = "macos")]
+{
+  window_builder = window_builder
+    .hidden_title(true)
+    .title_bar_style(TitleBarStyle::Overlay)
+    .traffic_light_position(LogicalPosition::new(16.0, 12.0)); // X, Y 좌표
+}
+```
+
+**방법 2: Cocoa 직접 조작**
+
+기존 cocoa crate를 활용하여 NSWindow의 버튼들을 직접 이동:
+
+```rust
+#[cfg(target_os = "macos")]
+fn set_traffic_lights_position(window: &tauri::WebviewWindow, x: f64, y: f64) {
+    use cocoa::appkit::{NSWindow, NSWindowButton};
+    use cocoa::base::id;
+    use cocoa::foundation::NSPoint;
+
+    if let Ok(ns_window) = window.ns_window() {
+        let ns_window = ns_window as id;
+        unsafe {
+            let buttons = [
+                NSWindowButton::NSWindowCloseButton,
+                NSWindowButton::NSWindowMiniaturizeButton,
+                NSWindowButton::NSWindowZoomButton,
+            ];
+            for (i, &button) in buttons.iter().enumerate() {
+                let btn: id = ns_window.standardWindowButton_(button);
+                if btn != cocoa::base::nil {
+                    let origin = NSPoint::new(x + (i as f64 * 20.0), y);
+                    btn.setFrameOrigin_(origin);
+                }
+            }
+        }
+    }
+}
+```
+
+**방법 3: Plugin 사용**
+
+| Plugin | 특징 |
+|--------|------|
+| [tauri-plugin-decorum](https://github.com/clearlysid/tauri-plugin-decorum) | `set_traffic_lights_inset(x, y)` 메서드 제공 |
+| [tauri-plugin-mac-rounded-corners](https://github.com/cloudworxx/tauri-plugin-mac-rounded-corners) | 리사이즈/풀스크린 시 자동 재설정, JS API 제공 |
+
+#### 리사이즈 시 위치 초기화 문제
+
+**핵심 문제**: macOS AppKit은 창 크기 변경, 풀스크린 전환 시 traffic lights를 **기본 위치로 리셋**합니다.
+
+```
+창 리사이즈 발생
+       ↓
+┌──────────────────┐     AppKit 내부 동작     ┌──────────────────┐
+│    ● ● ●         │  ──────────────────────▶ │● ● ●             │
+│  (커스텀 위치)   │                          │ (기본 위치 복귀) │
+└──────────────────┘                          └──────────────────┘
+```
+
+**해결 방법**: `on_window_event`로 리사이즈 이벤트 감지 후 재설정
+
+```rust
+window.on_window_event(move |event| {
+    match event {
+        WindowEvent::Resized(_) | WindowEvent::Moved(_) => {
+            set_traffic_lights_position(&window, 16.0, 12.0);
+        }
+        _ => {}
+    }
+});
+```
+
+#### unstable feature 버그 (참고)
+
+| Cargo.toml 설정 | 동작 |
+|-----------------|------|
+| `features = []` | ✅ `traffic_light_position` 정상 작동 |
+| `features = ["unstable"]` | ❌ 위치가 (0, 0)에 고정됨 ([Issue #14072](https://github.com/tauri-apps/tauri/issues/14072)) |
+
+현재 프로젝트는 `tauri = { version = "2.8.3", features = [] }`로 설정되어 있어 **이 버그에 해당하지 않음**.
+
+#### 권장 구현 방식
+
+| 방법 | 구현 난이도 | 리사이즈 처리 | 추가 의존성 |
+|------|------------|---------------|-------------|
+| 방법 1: `traffic_light_position` | 쉬움 (1줄) | 수동 이벤트 핸들러 필요 | 없음 |
+| 방법 2: Cocoa 직접 | 중간 | 수동 이벤트 핸들러 필요 | 없음 (이미 사용 중) |
+| 방법 3: Plugin | 쉬움 | 자동 처리 | Plugin 추가 필요 |
+
+**권장**: 이미 cocoa crate를 사용 중이므로 **방법 1 + 이벤트 핸들러**가 가장 깔끔함. 추가 의존성 없이 해결 가능.
+
+---
+
 ## Code References
 
 | 파일 | 라인 | 설명 |
@@ -223,6 +341,8 @@ const maxWidth = 800;
 | [tauri.conf.json](tauri-shell/src-tauri/tauri.conf.json#L13-L26) | 13-26 | Tauri 창 설정 |
 | [BoardList.tsx](frontend/pluto_duck_frontend/components/boards/BoardList.tsx) | 전체 | 보드 리스트 컴포넌트 |
 | [ProjectSelector.tsx](frontend/pluto_duck_frontend/components/projects/ProjectSelector.tsx) | - | 프로젝트 선택 드롭다운 |
+| [lib.rs](tauri-shell/src-tauri/src/lib.rs#L33-L65) | 33-65 | macOS 타이틀바/traffic lights 설정 |
+| [Cargo.toml](tauri-shell/src-tauri/Cargo.toml#L24) | 24 | Tauri features 설정 (unstable 미사용) |
 
 ---
 
@@ -259,3 +379,10 @@ const maxWidth = 800;
 1. Windows에서 `pl-[76px]` 패딩이 불필요한 공간을 차지하는지 확인 필요
 2. 사이드바 collapse 애니메이션이 `transition-all duration-300`으로 되어있으나 실제 동작 확인 필요
 3. 모바일/태블릿 뷰에서 `hidden lg:flex` 처리로 사이드바가 숨겨지는데, 대체 네비게이션 필요 여부
+4. ~~Traffic lights 위치 조정 가능 여부~~ → **조사 완료**: 섹션 7 참조
+
+## Next Steps (Traffic Lights 구현)
+
+1. [lib.rs](tauri-shell/src-tauri/src/lib.rs#L35-L37)에 `traffic_light_position` 추가
+2. 리사이즈 이벤트 핸들러 구현 (기존 `on_window_event` 확장)
+3. 적절한 Y 좌표 결정 (헤더 높이 40px 기준, 약 12-14px가 수직 중앙)
