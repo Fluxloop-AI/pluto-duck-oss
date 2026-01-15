@@ -27,6 +27,8 @@ export interface AssetEmbedConfig {
     stacked?: boolean;      // Stack bars/areas
     showDualAxis?: boolean; // Show secondary Y-axis for different scales
   };
+  hideBorder?: boolean;   // Hide the border around the component
+  hideHeader?: boolean;   // Hide the header bar
 }
 
 export type SerializedAssetEmbedNode = Spread<

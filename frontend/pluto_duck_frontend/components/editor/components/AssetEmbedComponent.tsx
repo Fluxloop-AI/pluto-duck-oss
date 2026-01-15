@@ -5,15 +5,15 @@ import { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { useLexicalNodeSelection } from '@lexical/react/useLexicalNodeSelection';
 import { mergeRegister } from '@lexical/utils';
+import { Table2, RefreshCw, AlertCircle, Loader2, Ellipsis, RotateCcw, Trash2, Copy, Download } from 'lucide-react';
 import {
-  Settings,
-  RefreshCw,
-  AlertCircle,
-  Loader2,
-  X,
-  RotateCcw,
-  Download,
-} from 'lucide-react';
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuCheckboxItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { 
   $getNodeByKey,
   $getSelection,
@@ -23,7 +23,7 @@ import {
   KEY_DELETE_COMMAND,
   KEY_BACKSPACE_COMMAND,
 } from 'lexical';
-import { type AssetEmbedConfig, AssetEmbedNode } from '../nodes/AssetEmbedNode';
+import { type AssetEmbedConfig, AssetEmbedNode, $createAssetEmbedNode } from '../nodes/AssetEmbedNode';
 import { AssetTableView } from './AssetTableView';
 import { AssetChartView } from './AssetChartView';
 import {
@@ -433,6 +433,32 @@ export function AssetEmbedComponent({
     }
   }, [analysisId, projectId]);
 
+  // Duplicate handler
+  const handleDuplicate = useCallback(() => {
+    editor.update(() => {
+      const node = $getNodeByKey(nodeKey);
+      if (node instanceof AssetEmbedNode) {
+        const newNode = $createAssetEmbedNode(
+          node.getAnalysisId(),
+          node.getProjectId(),
+          { ...node.getConfig() }
+        );
+        node.insertAfter(newNode);
+      }
+    });
+  }, [editor, nodeKey]);
+
+  // Toggle config option handler
+  const handleToggleConfig = useCallback(
+    (key: 'hideBorder' | 'hideHeader', value: boolean) => {
+      handleConfigUpdate({
+        ...config,
+        [key]: value,
+      });
+    },
+    [config, handleConfigUpdate]
+  );
+
   // Determine if UI should be visible
   const showUI = isHovered || isSelected || isLoading || !!error;
 
@@ -553,82 +579,118 @@ export function AssetEmbedComponent({
     );
   }
 
+  // Determine border style based on config and state
+  const getBorderClass = () => {
+    if (isSelected) {
+      return 'border border-blue-500 ring-2 ring-blue-500/30';
+    }
+    if (config.hideBorder) {
+      return 'border border-transparent';
+    }
+    return 'border border-border/60';
+  };
+
   return (
-    <div 
+    <div
       ref={containerRef}
-      className={`asset-embed-container rounded-md overflow-hidden bg-card transition-all duration-200 ${
-        showUI 
-          ? isSelected 
-            ? 'border border-blue-500 ring-2 ring-blue-500/30' 
-            : 'border border-border/60'
-          : 'border border-transparent'
-      }`}
+      className={`asset-embed-container rounded-md overflow-hidden bg-card transition-all duration-200 ${getBorderClass()}`}
       style={{ font: 'inherit' }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* Header - Only visible on hover/select */}
-      <div 
-        className={`flex items-center justify-between px-3 py-1.5 border-b bg-muted/20 transition-all duration-200 ${
-          showUI ? 'opacity-100 border-border/40' : 'opacity-0 h-0 py-0 border-transparent overflow-hidden'
-        }`}
-      >
-        <div className="flex items-center gap-1.5 text-muted-foreground">
-          <span className="text-xs">
-            {config.displayType === 'table' ? '📋' : '📊'}
-          </span>
-          <span className="text-xs font-medium text-foreground/80">{analysis?.name || analysisId}</span>
-          {freshness?.is_stale && (
-            <span className="flex items-center gap-0.5 text-[10px] bg-yellow-500/15 text-yellow-600 px-1.5 py-0.5 rounded">
-              <AlertCircle className="h-2.5 w-2.5" />
-              Stale
+      {/* Header - Always visible unless hideHeader is true (but show on hover/select for accessibility) */}
+      {(!config.hideHeader || showUI) && (
+        <div
+          className={`flex items-center justify-between px-3 py-1.5 border-b bg-muted/20 transition-all duration-200 border-border/40 ${
+            config.hideHeader && showUI ? 'opacity-70' : 'opacity-100'
+          }`}
+        >
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <span className="text-xs">
+              {config.displayType === 'table' ? '📋' : '📊'}
             </span>
-          )}
-          {isRetrying && (
-            <span className="flex items-center gap-0.5 text-[10px] bg-blue-500/15 text-blue-600 px-1.5 py-0.5 rounded">
-              <Loader2 className="h-2.5 w-2.5 animate-spin" />
-              Retry {retryCount}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-0.5">
-          {config.displayType === 'table' && (
-            <button
-              onClick={handleDownloadCsv}
-              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-              title="Download CSV"
-            >
-              <Download className="h-3 w-3" />
-            </button>
-          )}
-          <button
-            onClick={() => loadData(true)}
-            disabled={isLoading}
-            className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground rounded hover:bg-muted hover:text-foreground disabled:opacity-50 transition-colors"
-          >
-            {isLoading ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <RefreshCw className="h-3 w-3" />
+            <span className="text-xs font-medium text-foreground/80">{analysis?.name || analysisId}</span>
+            {freshness?.is_stale && (
+              <span className="flex items-center gap-0.5 text-[10px] bg-yellow-500/15 text-yellow-600 px-1.5 py-0.5 rounded">
+                <AlertCircle className="h-2.5 w-2.5" />
+                Stale
+              </span>
             )}
-            Refresh
-          </button>
-          <button
-            onClick={handleOpenConfig}
-            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-            title="Settings"
-          >
-            <Settings className="h-3 w-3" />
-          </button>
-          <button
-            onClick={handleDelete}
-            className="p-1 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
-            title="Delete"
-          >
-            <X className="h-3 w-3" />
-          </button>
+            {isRetrying && (
+              <span className="flex items-center gap-0.5 text-[10px] bg-blue-500/15 text-blue-600 px-1.5 py-0.5 rounded">
+                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                Retry {retryCount}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-0.5">
+            {config.displayType === 'table' && (
+              <button
+                onClick={handleDownloadCsv}
+                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                title="Download CSV"
+              >
+                <Download className="h-3 w-3" />
+              </button>
+            )}
+            <button
+              onClick={() => loadData(true)}
+              disabled={isLoading}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground rounded hover:bg-muted hover:text-foreground disabled:opacity-50 transition-colors"
+            >
+              {isLoading ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3 w-3" />
+              )}
+              Refresh
+            </button>
+            <button
+              onClick={handleOpenConfig}
+              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              title="Settings"
+            >
+              <Table2 className="h-3 w-3" />
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  title="More options"
+                >
+                  <Ellipsis className="h-3 w-3" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem
+                  onClick={handleDelete}
+                  className="text-red-600 focus:text-red-600 focus:bg-red-500/10"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  삭제
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleDuplicate}>
+                  <Copy className="h-4 w-4" />
+                  복제
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuCheckboxItem
+                  checked={config.hideBorder}
+                  onCheckedChange={(checked) => handleToggleConfig('hideBorder', checked)}
+                >
+                  외곽선 숨기기
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={config.hideHeader}
+                  onCheckedChange={(checked) => handleToggleConfig('hideHeader', checked)}
+                >
+                  헤더 숨기기
+                </DropdownMenuCheckboxItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Content */}
       <div className="p-3 not-prose">
