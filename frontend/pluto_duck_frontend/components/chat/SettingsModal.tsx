@@ -1,7 +1,20 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { EyeIcon, EyeOffIcon, AlertTriangleIcon, TrashIcon, Loader2, RefreshCw, Download } from 'lucide-react';
+import {
+  EyeIcon,
+  EyeOffIcon,
+  AlertTriangleIcon,
+  TrashIcon,
+  Loader2,
+  RefreshCw,
+  Download,
+  User,
+  Settings,
+  Bell,
+  Cpu,
+  Database,
+} from 'lucide-react';
 import { useAutoUpdate } from '../../hooks/useAutoUpdate';
 import {
   Dialog,
@@ -44,13 +57,34 @@ interface SettingsModalProps {
   onSettingsSaved?: (model: string) => void;
 }
 
+type SettingsMenu = 'profile' | 'preferences' | 'notifications' | 'models' | 'updates' | 'data';
+
+interface MenuItem {
+  id: SettingsMenu;
+  label: string;
+  icon: React.ElementType;
+}
+
+const MENU_ITEMS: MenuItem[] = [
+  { id: 'profile', label: 'Profile', icon: User },
+  { id: 'preferences', label: 'Preferences', icon: Settings },
+  { id: 'notifications', label: 'Notifications', icon: Bell },
+];
+
+const MENU_ITEMS_SETTINGS: MenuItem[] = [
+  { id: 'models', label: 'Models', icon: Cpu },
+  { id: 'updates', label: 'Updates', icon: Download },
+  { id: 'data', label: 'Data', icon: Database },
+];
+
 const MODELS = ALL_MODEL_OPTIONS;
 
 export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsModalProps) {
+  const [activeMenu, setActiveMenu] = useState<SettingsMenu>('models');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
-  
+
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('gpt-5-mini');
   const [hasExistingKey, setHasExistingKey] = useState(false);
@@ -60,7 +94,7 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
   const [loadingLocalModels, setLoadingLocalModels] = useState(false);
   const [localDownloadStates, setLocalDownloadStates] = useState<Record<string, LocalDownloadStatus>>({});
   const [deletingModelId, setDeletingModelId] = useState<string | null>(null);
-  
+
   // DB Reset states
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -247,7 +281,7 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
   const handleSave = async () => {
     setError(null);
     setSuccessMessage(null);
-    
+
     // Validation
     if (apiKey && !apiKey.startsWith('sk-')) {
       setError('API key must start with "sk-"');
@@ -257,15 +291,15 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
     setSaving(true);
     try {
       const payload: UpdateSettingsRequest = {};
-      
+
       // Only update API key if user entered a new one
       if (apiKey.trim()) {
         payload.llm_api_key = apiKey.trim();
       }
-      
+
       // Always update model (even if just changing model)
       payload.llm_model = model;
-      
+
       // If no API key entered but one exists, and model hasn't changed, nothing to do
       if (!payload.llm_api_key && hasExistingKey && !apiKey.trim()) {
         // User didn't enter new key, just update model
@@ -275,12 +309,12 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
       await updateSettings(payload);
       setSuccessMessage('Settings saved successfully!');
       setHasExistingKey(true); // Mark that we now have a key
-      
+
       // Notify parent component about model change
       if (onSettingsSaved && model) {
         onSettingsSaved(model);
       }
-      
+
       // Close modal after a short delay
       setTimeout(() => {
         onOpenChange(false);
@@ -303,12 +337,12 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
     setResetting(true);
     setError(null);
     setSuccessMessage(null);
-    
+
     try {
       await resetDatabase();
       setSuccessMessage('Database reset successfully! Please restart the application.');
       setShowResetDialog(false);
-      
+
       // Close the settings modal after a delay
       setTimeout(() => {
         onOpenChange(false);
@@ -322,107 +356,157 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
     }
   };
 
-  return (
-    <>
-      {/* Main Settings Dialog */}
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[500px] overflow-hidden">
-          <DialogHeader>
-            <DialogTitle>Settings</DialogTitle>
-            <DialogDescription>
-              Configure your OpenAI API settings and preferences.
-            </DialogDescription>
-          </DialogHeader>
+  const renderSidebar = () => (
+    <div className="w-[200px] border-r border-border py-2 flex flex-col">
+      <nav className="flex flex-col gap-1 px-2">
+        {MENU_ITEMS.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setActiveMenu(item.id)}
+              className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors ${
+                activeMenu === item.id
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              {item.label}
+            </button>
+          );
+        })}
+      </nav>
+      <div className="mx-4 my-2 border-t border-border" />
+      <nav className="flex flex-col gap-1 px-2">
+        {MENU_ITEMS_SETTINGS.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setActiveMenu(item.id)}
+              className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors ${
+                activeMenu === item.id
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              {item.label}
+            </button>
+          );
+        })}
+      </nav>
+    </div>
+  );
 
-        {loading ? (
-          <div className="flex items-center justify-center py-8">
-            <div className="text-muted-foreground">Loading settings...</div>
-          </div>
-        ) : (
-          <div className="grid gap-6 py-4 max-h-[65vh] overflow-y-auto pr-4">
-            {/* Provider */}
-            <div className="grid gap-2">
-              <label className="text-sm font-medium">Provider</label>
-              <Select value="openai" disabled>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="openai">OpenAI</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                Currently only OpenAI is supported
-              </p>
-            </div>
+  const renderPlaceholder = (menu: SettingsMenu) => {
+    const menuItem = [...MENU_ITEMS, ...MENU_ITEMS_SETTINGS].find(m => m.id === menu);
+    if (!menuItem) return null;
+    const Icon = menuItem.icon;
 
-            {/* API Key */}
-            <div className="grid gap-2">
-              <label htmlFor="api-key" className="text-sm font-medium">
-                API Key
-                {hasExistingKey && (
-                  <span className="ml-2 text-xs font-normal text-green-600 dark:text-green-400">
-                    ✓ Configured
-                  </span>
-                )}
-              </label>
-              <div className="relative">
-                <Input
-                  id="api-key"
-                  type={showApiKey ? 'text' : 'password'}
-                  placeholder={hasExistingKey ? 'sk-••••••••••••••••' : 'sk-...'}
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  className="pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  tabIndex={-1}
-                >
-                  {showApiKey ? (
-                    <EyeOffIcon className="h-4 w-4" />
-                  ) : (
-                    <EyeIcon className="h-4 w-4" />
-                  )}
-                </button>
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+        <Icon className="h-12 w-12 mb-4 opacity-50" />
+        <h3 className="text-lg font-medium mb-2">{menuItem.label}</h3>
+        <p className="text-sm">This feature is coming soon.</p>
+      </div>
+    );
+  };
+
+  const renderModelsContent = () => (
+    <div className="flex flex-col h-full">
+      <div className="flex-1 overflow-y-auto pr-2">
+        <div className="grid gap-6">
+          {/* API Section */}
+          <div>
+            <h3 className="text-sm font-semibold mb-4">API</h3>
+            <div className="grid gap-4">
+              {/* Provider */}
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">Provider</label>
+                <Select value="openai" disabled>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="openai">OpenAI</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Currently only OpenAI is supported
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground">
-                {hasExistingKey 
-                  ? 'API key is already configured. Enter a new key to replace it.'
-                  : 'Your OpenAI API key (starts with sk-)'}
-              </p>
-            </div>
 
-            {/* Default Model */}
-            <div className="grid gap-2">
-              <label htmlFor="model" className="text-sm font-medium">
-                Default Model
-              </label>
-              <Select value={model} onValueChange={setModel}>
-                <SelectTrigger id="model">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {MODELS.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                Model to use for new conversations
-              </p>
-            </div>
+              {/* API Key */}
+              <div className="grid gap-2">
+                <label htmlFor="api-key" className="text-sm font-medium">
+                  API Key
+                  {hasExistingKey && (
+                    <span className="ml-2 text-xs font-normal text-green-600 dark:text-green-400">
+                      ✓ Configured
+                    </span>
+                  )}
+                </label>
+                <div className="relative">
+                  <Input
+                    id="api-key"
+                    type={showApiKey ? 'text' : 'password'}
+                    placeholder={hasExistingKey ? 'sk-••••••••••••••••' : 'sk-...'}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    tabIndex={-1}
+                  >
+                    {showApiKey ? (
+                      <EyeOffIcon className="h-4 w-4" />
+                    ) : (
+                      <EyeIcon className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {hasExistingKey
+                    ? 'API key is already configured. Enter a new key to replace it.'
+                    : 'Your OpenAI API key (starts with sk-)'}
+                </p>
+              </div>
 
-            {/* Local Models */}
-            <div className="grid gap-2">
-              <label className="text-sm font-medium">Local Models</label>
-              <p className="text-xs text-muted-foreground">
-                다운로드는 백그라운드에서 진행되며, 창을 닫아도 계속됩니다.
-              </p>
+              {/* Default Model */}
+              <div className="grid gap-2">
+                <label htmlFor="model" className="text-sm font-medium">
+                  Default Model
+                </label>
+                <Select value={model} onValueChange={setModel}>
+                  <SelectTrigger id="model">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MODELS.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Model to use for new conversations
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Local Models Section */}
+          <div className="border-t border-border pt-6">
+            <h3 className="text-sm font-semibold mb-4">Local Models</h3>
+            <p className="text-xs text-muted-foreground mb-4">
+              다운로드는 백그라운드에서 진행되며, 창을 닫아도 계속됩니다.
+            </p>
             <div className="grid gap-2">
               {LOCAL_MODEL_OPTIONS.map(option => {
                 const downloadState = localDownloadStates[option.id]?.status ?? 'idle';
@@ -503,202 +587,245 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
                 );
               })}
             </div>
-              {loadingLocalModels ? (
-                <p className="text-xs text-muted-foreground">Loading local models…</p>
-              ) : localModels.length > 0 ? (
-                <ul className="space-y-1 rounded-md border border-border p-3 text-xs text-muted-foreground">
-                  {localModels.map(localModel => {
-                    const option = LOCAL_MODEL_OPTION_MAP[localModel.id];
-                    const displayName = option?.label ?? localModel.name ?? localModel.id;
-                    const quantization = localModel.quantization ?? option?.quantization ?? 'custom';
-                    const sizeLabel =
-                      typeof localModel.size_bytes === 'number'
-                        ? ` · ${(localModel.size_bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-                        : '';
+            {loadingLocalModels ? (
+              <p className="text-xs text-muted-foreground mt-4">Loading local models…</p>
+            ) : localModels.length > 0 ? (
+              <ul className="mt-4 space-y-1 rounded-md border border-border p-3 text-xs text-muted-foreground">
+                {localModels.map(localModel => {
+                  const option = LOCAL_MODEL_OPTION_MAP[localModel.id];
+                  const displayName = option?.label ?? localModel.name ?? localModel.id;
+                  const quantization = localModel.quantization ?? option?.quantization ?? 'custom';
+                  const sizeLabel =
+                    typeof localModel.size_bytes === 'number'
+                      ? ` · ${(localModel.size_bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+                      : '';
 
-                    return (
-                      <li key={localModel.id} className="flex items-center justify-between gap-3">
-                        <div className="flex flex-col">
-                          <span className="font-medium text-foreground">{displayName}</span>
-                          <span className="text-muted-foreground">
-                            {quantization}
-                            {sizeLabel}
-                          </span>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive hover:text-destructive"
-                          disabled={
-                            loading ||
-                            saving ||
-                            resetting ||
-                            isAnyDownloadInProgress ||
-                            deletingModelId === localModel.id
-                          }
-                          onClick={() => handleDeleteLocalModel(localModel)}
-                          title="Delete local model"
-                        >
-                          {deletingModelId === localModel.id ? (
-                            <span className="text-xs">삭제 중...</span>
-                          ) : (
-                            <>
-                              <TrashIcon className="h-4 w-4" />
-                              <span className="sr-only">Delete</span>
-                            </>
-                          )}
-                        </Button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                <p className="text-xs text-muted-foreground">No local models installed yet.</p>
-              )}
-            </div>
-
-            {/* Error Message */}
-            {error && (
-              <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-                {error}
-              </div>
-            )}
-
-            {/* Success Message */}
-            {successMessage && (
-              <div className="rounded-md bg-green-500/10 p-3 text-sm text-green-600 dark:text-green-400">
-                {successMessage}
-              </div>
-            )}
-
-            {/* Auto Updates */}
-            <div className="mt-6 border-t border-border pt-6">
-              <div className="grid gap-4">
-                <div className="flex items-start gap-3">
-                  <Download className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
-                  <div className="grid gap-3 flex-1">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold">Auto Updates</h3>
-                      {currentVersion && (
-                        <span className="text-xs text-muted-foreground font-mono">
-                          v{currentVersion}
+                  return (
+                    <li key={localModel.id} className="flex items-center justify-between gap-3">
+                      <div className="flex flex-col">
+                        <span className="font-medium text-foreground">{displayName}</span>
+                        <span className="text-muted-foreground">
+                          {quantization}
+                          {sizeLabel}
                         </span>
-                      )}
-                    </div>
-                    
-                    {/* Auto Download Toggle */}
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm">Auto Download</p>
-                        <p className="text-xs text-muted-foreground">
-                          Automatically download updates in the background
-                        </p>
                       </div>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={autoDownload}
-                        onClick={() => setAutoDownload(!autoDownload)}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                          autoDownload ? 'bg-primary' : 'bg-muted'
-                        }`}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        disabled={
+                          loading ||
+                          saving ||
+                          resetting ||
+                          isAnyDownloadInProgress ||
+                          deletingModelId === localModel.id
+                        }
+                        onClick={() => handleDeleteLocalModel(localModel)}
+                        title="Delete local model"
                       >
-                        <span
-                          className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${
-                            autoDownload ? 'translate-x-6' : 'translate-x-1'
-                          }`}
-                        />
-                      </button>
-                    </div>
+                        {deletingModelId === localModel.id ? (
+                          <span className="text-xs">삭제 중...</span>
+                        ) : (
+                          <>
+                            <TrashIcon className="h-4 w-4" />
+                            <span className="sr-only">Delete</span>
+                          </>
+                        )}
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="text-xs text-muted-foreground mt-4">No local models installed yet.</p>
+            )}
+          </div>
 
-                    {/* Update Status */}
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm">Current Status</p>
-                        <p className="text-xs text-muted-foreground">
-                          {readyToRestart
-                            ? `Update ready - restart to apply`
-                            : updateAvailable
-                            ? `Version ${updateAvailable} available`
-                            : 'Up to date'}
-                        </p>
-                      </div>
-                      
-                      {readyToRestart ? (
-                        <Button size="sm" onClick={restart}>
-                          Restart Now
-                        </Button>
-                      ) : downloading ? (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          {progress}%
-                        </div>
-                      ) : updateAvailable && !autoDownload ? (
-                        <Button size="sm" variant="outline" onClick={downloadUpdate}>
-                          Download
-                        </Button>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={checkForUpdates}
-                          disabled={downloading}
-                        >
-                          <RefreshCw className="h-4 w-4 mr-1" />
-                          Check
-                        </Button>
-                      )}
-                    </div>
+          {/* Error Message */}
+          {error && (
+            <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+              {error}
+            </div>
+          )}
 
-                    {updateError && (
-                      <p className="text-xs text-destructive">{updateError}</p>
-                    )}
-                  </div>
-                </div>
-              </div>
+          {/* Success Message */}
+          {successMessage && (
+            <div className="rounded-md bg-green-500/10 p-3 text-sm text-green-600 dark:text-green-400">
+              {successMessage}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Footer for Models section */}
+      <div className="flex justify-end gap-2 pt-4 border-t border-border mt-4">
+        <Button variant="outline" onClick={handleCancel} disabled={saving}>
+          Cancel
+        </Button>
+        <Button onClick={handleSave} disabled={loading || saving}>
+          {saving ? 'Saving...' : 'Save'}
+        </Button>
+      </div>
+    </div>
+  );
+
+  const renderUpdatesContent = () => (
+    <div className="grid gap-4">
+      <div className="flex items-start gap-3">
+        <Download className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
+        <div className="grid gap-3 flex-1">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">Auto Updates</h3>
+            {currentVersion && (
+              <span className="text-xs text-muted-foreground font-mono">
+                v{currentVersion}
+              </span>
+            )}
+          </div>
+
+          {/* Auto Download Toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm">Auto Download</p>
+              <p className="text-xs text-muted-foreground">
+                Automatically download updates in the background
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoDownload}
+              onClick={() => setAutoDownload(!autoDownload)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                autoDownload ? 'bg-primary' : 'bg-muted'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${
+                  autoDownload ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Update Status */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm">Current Status</p>
+              <p className="text-xs text-muted-foreground">
+                {readyToRestart
+                  ? `Update ready - restart to apply`
+                  : updateAvailable
+                  ? `Version ${updateAvailable} available`
+                  : 'Up to date'}
+              </p>
             </div>
 
-            {/* Danger Zone - Database Reset */}
-            <div className="mt-6 border-t border-border pt-6">
-              <div className="grid gap-4">
-                <div className="flex items-start gap-3">
-                  <AlertTriangleIcon className="h-5 w-5 text-destructive mt-0.5 shrink-0" />
-                  <div className="grid gap-2 flex-1">
-                    <h3 className="text-sm font-semibold">Danger Zone</h3>
-                    <div className="grid gap-2">
-                      <p className="text-sm text-muted-foreground">
-                        Reset the database to fix initialization issues.
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        ⚠️ This will permanently delete all conversations, messages, projects, and data sources.
-                      </p>
-                    </div>
-                    <Button 
-                      variant="destructive" 
-                      size="sm"
-                      onClick={() => setShowResetDialog(true)}
-                      disabled={loading || saving || resetting}
-                      className="w-fit"
-                    >
-                      Reset Database
-                    </Button>
-                  </div>
-                </div>
+            {readyToRestart ? (
+              <Button size="sm" onClick={restart}>
+                Restart Now
+              </Button>
+            ) : downloading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {progress}%
               </div>
+            ) : updateAvailable && !autoDownload ? (
+              <Button size="sm" variant="outline" onClick={downloadUpdate}>
+                Download
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={checkForUpdates}
+                disabled={downloading}
+              >
+                <RefreshCw className="h-4 w-4 mr-1" />
+                Check
+              </Button>
+            )}
+          </div>
+
+          {updateError && (
+            <p className="text-xs text-destructive">{updateError}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderDataContent = () => (
+    <div className="grid gap-4">
+      <h3 className="text-sm font-semibold">Data Management</h3>
+      <div className="flex items-start gap-3">
+        <AlertTriangleIcon className="h-5 w-5 text-destructive mt-0.5 shrink-0" />
+        <div className="grid gap-2 flex-1">
+          <h4 className="text-sm font-medium">Danger Zone</h4>
+          <div className="grid gap-2">
+            <p className="text-sm text-muted-foreground">
+              Reset the database to fix initialization issues.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              ⚠️ This will permanently delete all conversations, messages, projects, and data sources.
+            </p>
+          </div>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setShowResetDialog(true)}
+            disabled={loading || saving || resetting}
+            className="w-fit"
+          >
+            Reset Database
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderContent = () => {
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center h-full">
+          <div className="text-muted-foreground">Loading settings...</div>
+        </div>
+      );
+    }
+
+    switch (activeMenu) {
+      case 'models':
+        return renderModelsContent();
+      case 'updates':
+        return renderUpdatesContent();
+      case 'data':
+        return renderDataContent();
+      case 'profile':
+      case 'preferences':
+      case 'notifications':
+        return renderPlaceholder(activeMenu);
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <>
+      {/* Main Settings Dialog */}
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-[750px] p-0 overflow-hidden">
+          <DialogHeader className="px-6 pt-6 pb-4 border-b border-border">
+            <DialogTitle>Settings</DialogTitle>
+          </DialogHeader>
+
+          <div className="flex h-[500px]">
+            {renderSidebar()}
+            <div className="flex-1 p-6 overflow-hidden">
+              {renderContent()}
             </div>
           </div>
-        )}
-
-        <DialogFooter>
-          <Button variant="outline" onClick={handleCancel} disabled={saving}>
-            Cancel
-          </Button>
-          <Button onClick={handleSave} disabled={loading || saving}>
-            {saving ? 'Saving...' : 'Save'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
 
       {/* Confirmation Dialog for Database Reset */}
       <Dialog open={showResetDialog} onOpenChange={setShowResetDialog}>
@@ -720,7 +847,7 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
               <li>All data sources and imported data</li>
               <li>All user settings (except API keys which are stored separately)</li>
             </ul>
-            
+
             <div className="mt-4 p-3 bg-destructive/10 rounded-md border border-destructive/20">
               <p className="text-sm font-medium text-destructive">
                 Are you absolutely sure you want to continue?
@@ -729,15 +856,15 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
           </div>
 
           <DialogFooter>
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               onClick={() => setShowResetDialog(false)}
               disabled={resetting}
             >
               Cancel
             </Button>
-            <Button 
-              variant="destructive" 
+            <Button
+              variant="destructive"
               onClick={handleResetDatabase}
               disabled={resetting}
             >
@@ -749,4 +876,3 @@ export function SettingsModal({ open, onOpenChange, onSettingsSaved }: SettingsM
     </>
   );
 }
-
