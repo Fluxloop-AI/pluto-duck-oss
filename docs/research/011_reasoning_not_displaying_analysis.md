@@ -120,7 +120,7 @@ async def on_llm_end(self, response: Any, **kwargs: Any) -> None:
 2. `on_llm_end`는 최종 응답 텍스트를 `text` 필드로 전송 - reasoning이 아님
 3. 프론트엔드가 기대하는 `reason` 필드가 없음
 
-### 3.3 백엔드 - GPT-5 응답 처리
+### 3.3 백엔드 - GPT-5 응답 처리 (providers.py - 미사용)
 
 **파일:** `agent/core/llm/providers.py:53-79`
 
@@ -154,10 +154,45 @@ async def ainvoke(self, prompt: str, *, metadata: Optional[Dict[str, Any]] = Non
     return ""
 ```
 
-**문제점:**
-1. `reasoning` 옵션으로 GPT-5에 요청은 보내지만
-2. 응답에서 `output_text`(최종 텍스트)만 반환
-3. `response.output`의 reasoning 항목을 완전히 무시
+**⚠️ 중요:** 이 코드는 실제 에이전트에서 **사용되지 않음** (3.4 참조)
+
+---
+
+### 3.4 🔴 근본 원인 발견 (2026-01-16 검증)
+
+**실제 에이전트는 `providers.py`를 사용하지 않고 `langchain_openai.ChatOpenAI`를 직접 사용!**
+
+**파일:** `agent/core/deep/agent.py:144-148`
+
+```python
+from langchain_openai import ChatOpenAI
+
+chat_model = ChatOpenAI(
+    model=effective_model,
+    api_key=effective_api_key,
+    base_url=str(settings.agent.api_base) if settings.agent.api_base else None,
+)
+```
+
+**검증 방법:** 백엔드 로그에서 확인
+
+```
+# 실제 호출되는 API (Chat Completions API)
+httpx | HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+
+# providers.py가 사용했다면 이렇게 보여야 함 (Responses API)
+# httpx | HTTP Request: POST https://api.openai.com/v1/responses "HTTP/1.1 200 OK"
+```
+
+**API 비교:**
+
+| 구분 | providers.py | agent.py (실제 사용) |
+|------|-------------|---------------------|
+| LLM 클래스 | `OpenAILLMProvider` | `ChatOpenAI` (LangChain) |
+| API 엔드포인트 | `/v1/responses` | `/v1/chat/completions` |
+| Reasoning 지원 | ✅ 가능 | ❌ 불가능 |
+
+**결론:** LangChain의 `ChatOpenAI`는 Chat Completions API를 사용하므로, GPT-5의 Responses API reasoning 기능을 **구조적으로 지원할 수 없음**.
 
 ---
 
@@ -263,7 +298,36 @@ interface ReasoningOutput {
 
 ## 5. 해결 방안
 
-### 5.1 백엔드 수정 - providers.py
+### 5.0 🔴 해결 방안 재검토 필요 (2026-01-16)
+
+기존 해결 방안(5.1~5.3)은 `providers.py`가 사용된다는 가정 하에 작성됨.
+실제로는 `ChatOpenAI`를 사용하므로 **다른 접근 필요**.
+
+#### 옵션 A: Custom LangChain LLM Wrapper 구현
+- `BaseChatModel`을 상속하여 Responses API를 호출하는 커스텀 클래스 생성
+- 장점: LangGraph/LangChain 생태계와 호환
+- 단점: 복잡도 높음, tool calling 등 기능 재구현 필요
+
+#### 옵션 B: LangChain의 Responses API 지원 대기/확인
+- `langchain-openai` 패키지가 Responses API를 지원하는지 확인
+- 최신 버전에서 `ChatOpenAI`에 reasoning 옵션이 있는지 조사
+
+#### 옵션 C: 에이전트 아키텍처 변경
+- LangChain 대신 직접 OpenAI Responses API 사용
+- 장점: 완전한 제어 가능
+- 단점: LangGraph의 장점(상태 관리, 그래프 기반 워크플로우) 포기
+
+#### 옵션 D: 하이브리드 접근
+- 에이전트 실행은 LangChain 유지
+- Reasoning 표시용으로 별도 API 호출 (UX 개선용)
+
+**권장:** 옵션 B 먼저 조사 후, 필요시 옵션 A 또는 D 진행
+
+---
+
+### 5.1 (기존 방안 - providers.py 사용 시) 백엔드 수정 - providers.py
+
+⚠️ **주의:** 이 방안은 `providers.py`가 실제로 사용될 때만 적용 가능
 
 GPT-5 응답에서 reasoning 블록을 추출하여 별도로 반환:
 
