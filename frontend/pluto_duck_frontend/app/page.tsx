@@ -482,7 +482,7 @@ export default function WorkspacePage() {
           sidebarCollapsed ? 'w-0 border-r-0' : 'w-64 border-r'
         }`}>
           <div className="flex h-full w-64 min-w-64 flex-col">
-            <div className="px-3 pt-3 pb-3">
+            <div className="pl-[18px] pr-[14px] pt-3 pb-3">
               <div className="flex items-center justify-between">
                 <ProjectSelector
                   currentProject={currentProject}
