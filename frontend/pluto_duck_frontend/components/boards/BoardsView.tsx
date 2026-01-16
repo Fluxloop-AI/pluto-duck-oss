@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
 import { LayoutDashboard } from 'lucide-react';
 import { BoardToolbar } from './BoardToolbar';
-import { BoardEditor } from '../editor/BoardEditor';
+import { BoardEditor, type BoardEditorHandle } from '../editor/BoardEditor';
 import { Board, BoardTab, updateBoard } from '../../lib/boardsApi';
 import { nanoid } from 'nanoid';
 
@@ -11,6 +11,10 @@ interface BoardsViewProps {
   projectId: string;
   activeBoard: Board | null;
   onBoardUpdate?: (board: Board) => void;
+}
+
+export interface BoardsViewHandle {
+  insertMarkdown: (content: string) => void;
 }
 
 // Default tab when a board has no tabs yet
@@ -44,7 +48,17 @@ function migrateToTabs(board: Board): BoardTab[] {
   return [createDefaultTab()];
 }
 
-export function BoardsView({ projectId, activeBoard, onBoardUpdate }: BoardsViewProps) {
+export const BoardsView = forwardRef<BoardsViewHandle, BoardsViewProps>(
+  function BoardsView({ projectId, activeBoard, onBoardUpdate }, ref) {
+  const boardEditorRef = useRef<BoardEditorHandle>(null);
+
+  // Expose insertMarkdown method to parent
+  useImperativeHandle(ref, () => ({
+    insertMarkdown: (content: string) => {
+      boardEditorRef.current?.insertMarkdown(content);
+    },
+  }));
+
   // Initialize tabs from board settings - use useMemo to ensure consistent IDs
   const initialData = useMemo(() => {
     if (!activeBoard) {
@@ -205,6 +219,7 @@ export function BoardsView({ projectId, activeBoard, onBoardUpdate }: BoardsView
       <div className="flex-1 overflow-hidden relative">
         {activeTab && (
           <BoardEditor
+            ref={boardEditorRef}
             key={`${activeBoard.id}-${activeTab.id}`}
             board={activeBoard}
             projectId={projectId}
@@ -216,4 +231,4 @@ export function BoardsView({ projectId, activeBoard, onBoardUpdate }: BoardsView
       </div>
     </div>
   );
-}
+});

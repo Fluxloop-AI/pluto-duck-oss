@@ -15,7 +15,7 @@ import { LinkNode, AutoLinkNode } from '@lexical/link';
 import { ListPlugin } from '@lexical/react/LexicalListPlugin';
 import { LinkPlugin } from '@lexical/react/LexicalLinkPlugin';
 import LexicalErrorBoundary from '@lexical/react/LexicalErrorBoundary';
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 
 import { editorTheme } from './theme';
 import type { Board } from '../../lib/boardsApi';
@@ -23,6 +23,7 @@ import { ImageNode, AssetEmbedNode, type AssetEmbedConfig } from './nodes';
 import SlashCommandPlugin, { AssetEmbedContext } from './plugins/SlashCommandPlugin';
 import DraggableBlockPlugin from './plugins/DraggableBlockPlugin';
 import { InitialContentPlugin } from './plugins/InitialContentPlugin';
+import { InsertMarkdownPlugin, type InsertMarkdownHandle } from './plugins/InsertMarkdownPlugin';
 import { AssetPicker } from './components/AssetPicker';
 import { DisplayConfigModal } from './components/DisplayConfigModal';
 import { ConfigModalContext } from './components/AssetEmbedComponent';
@@ -33,6 +34,10 @@ interface BoardEditorProps {
   tabId: string;
   initialContent: string | null;
   onContentChange: (content: string) => void;
+}
+
+export interface BoardEditorHandle {
+  insertMarkdown: (content: string) => void;
 }
 
 // State for the two-step embed flow
@@ -49,13 +54,23 @@ interface EditConfigState {
   onSave: ((config: AssetEmbedConfig) => void) | null;
 }
 
-export function BoardEditor({ 
-  board, 
-  projectId, 
-  tabId,
-  initialContent,
-  onContentChange,
-}: BoardEditorProps) {
+export const BoardEditor = forwardRef<BoardEditorHandle, BoardEditorProps>(
+  function BoardEditor({
+    board,
+    projectId,
+    tabId,
+    initialContent,
+    onContentChange,
+  }, ref) {
+  const insertMarkdownRef = useRef<InsertMarkdownHandle>(null);
+
+  // Expose insertMarkdown method to parent
+  useImperativeHandle(ref, () => ({
+    insertMarkdown: (content: string) => {
+      insertMarkdownRef.current?.insertMarkdown(content);
+    },
+  }));
+
   const initialConfig = {
     namespace: 'BoardEditor',
     theme: editorTheme,
@@ -239,6 +254,7 @@ export function BoardEditor({
               <OnChangePlugin onChange={handleOnChange} />
               <SlashCommandPlugin projectId={projectId} />
               <InitialContentPlugin content={initialContent} />
+              <InsertMarkdownPlugin ref={insertMarkdownRef} />
             </div>
           </LexicalComposer>
         </ConfigModalContext.Provider>
@@ -276,4 +292,4 @@ export function BoardEditor({
       )}
     </div>
   );
-}
+});

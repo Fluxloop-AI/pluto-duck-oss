@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { PlusIcon, SettingsIcon, DatabaseIcon, PanelLeftClose, PanelLeftOpen, SquarePen, Layers, PanelRightClose, PanelRightOpen, Package } from 'lucide-react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { isTauriRuntime } from '../lib/tauriRuntime';
@@ -15,7 +15,7 @@ import {
   ImportSQLiteModal,
   ConnectFolderModal,
 } from '../components/data-sources';
-import { BoardsView, BoardList, CreateBoardModal } from '../components/boards';
+import { BoardsView, BoardList, CreateBoardModal, BoardSelectorModal, type BoardsViewHandle } from '../components/boards';
 import { AssetListView } from '../components/assets';
 import { ProjectSelector, CreateProjectModal } from '../components/projects';
 import { useBoards } from '../hooks/useBoards';
@@ -56,6 +56,11 @@ export default function WorkspacePage() {
   const [showCreateProjectModal, setShowCreateProjectModal] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatPanelCollapsed, setChatPanelCollapsed] = useState(false);
+  const [boardSelectorOpen, setBoardSelectorOpen] = useState(false);
+  const [pendingSendContent, setPendingSendContent] = useState<string | null>(null);
+
+  // Ref for BoardsView to access insertMarkdown
+  const boardsViewRef = useRef<BoardsViewHandle>(null);
 
   // Load sidebar collapsed state from localStorage
   useEffect(() => {
@@ -387,6 +392,33 @@ export default function WorkspacePage() {
     setIsResizing(true);
   }, []);
 
+  // Handle sending content from chat to board
+  const handleSendToBoard = useCallback((messageId: string, content: string) => {
+    if (activeBoard) {
+      // Board is selected - insert directly
+      boardsViewRef.current?.insertMarkdown(content);
+    } else {
+      // No board selected - show selector modal
+      setPendingSendContent(content);
+      setBoardSelectorOpen(true);
+    }
+  }, [activeBoard]);
+
+  // Handle board selection from modal
+  const handleBoardSelect = useCallback((boardId: string) => {
+    const board = boards.find(b => b.id === boardId);
+    if (board) {
+      selectBoard(board);
+      // Wait for board to be selected and editor to mount, then insert content
+      if (pendingSendContent) {
+        setTimeout(() => {
+          boardsViewRef.current?.insertMarkdown(pendingSendContent);
+          setPendingSendContent(null);
+        }, 100);
+      }
+    }
+  }, [boards, selectBoard, pendingSendContent]);
+
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing) return;
@@ -575,7 +607,7 @@ export default function WorkspacePage() {
           <div className="relative flex flex-1 flex-col overflow-hidden">
             {defaultProjectId ? (
               mainView === 'boards' ? (
-                <BoardsView projectId={defaultProjectId} activeBoard={activeBoard} />
+                <BoardsView ref={boardsViewRef} projectId={defaultProjectId} activeBoard={activeBoard} />
               ) : (
                 <AssetListView projectId={defaultProjectId} initialTab={assetInitialTab} refreshTrigger={dataSourcesRefresh} />
               )
@@ -614,6 +646,7 @@ export default function WorkspacePage() {
                 }}
                 savedTabs={currentProject?.settings?.ui_state?.chat?.open_tabs}
                 savedActiveTabId={currentProject?.settings?.ui_state?.chat?.active_tab_id}
+                onSendToBoard={handleSendToBoard}
               />
             </div>
           )}
@@ -697,6 +730,12 @@ export default function WorkspacePage() {
         }}
         onImportSuccess={handleImportSuccess}
         existingSource={selectedSourceForImport}
+      />
+      <BoardSelectorModal
+        open={boardSelectorOpen}
+        onOpenChange={setBoardSelectorOpen}
+        boards={boards}
+        onSelect={handleBoardSelect}
       />
     </div>
   );

@@ -16,6 +16,7 @@ interface MultiTabChatPanelProps {
   onTabsChange?: (tabs: ChatTab[], activeTabId: string | null) => void;
   savedTabs?: Array<{ id: string; order: number }>;
   savedActiveTabId?: string;
+  onSendToBoard?: (messageId: string, content: string) => void;
 }
 
 export function MultiTabChatPanel({
@@ -28,6 +29,7 @@ export function MultiTabChatPanel({
   onTabsChange,
   savedTabs,
   savedActiveTabId,
+  onSendToBoard,
 }: MultiTabChatPanelProps) {
   const {
     tabs,
@@ -139,6 +141,7 @@ export function MultiTabChatPanel({
               onModelChange={onModelChange}
               onSubmit={handleSubmit}
               projectId={projectId || undefined}
+              onSendToBoard={onSendToBoard}
             />
           </div>
         ) : (
@@ -171,6 +174,7 @@ export function MultiTabChatPanel({
                 onFeedback={handleFeedback}
                 feedbackMap={feedbackMap}
                 projectId={projectId || undefined}
+                onSendToBoard={onSendToBoard}
               />
             </div>
           ))
