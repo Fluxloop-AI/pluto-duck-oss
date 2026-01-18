@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import {
   Play,
+  Download,
   Save,
   Clock,
   GitBranch,
@@ -33,6 +34,7 @@ import {
   getStatusColor,
   getMaterializationIcon,
 } from '@/lib/assetsApi';
+import { downloadAnalysisCsv } from '@/lib/analysisDownload';
 import { LineageGraphView } from './LineageGraphView';
 
 interface AssetDetailModalProps {
@@ -118,6 +120,19 @@ export function AssetDetailModal({
     }
   };
 
+  const handleDownloadCsv = async () => {
+    try {
+      await downloadAnalysisCsv(analysis.id, {
+        projectId,
+        force: true,
+        suggestedName: analysis.id,
+      });
+    } catch (error) {
+      console.error('Failed to download CSV:', error);
+      alert('CSV 다운로드에 실패했습니다.');
+    }
+  };
+
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return '-';
     return new Date(dateStr).toLocaleString('ko-KR');
@@ -157,6 +172,10 @@ export function AssetDetailModal({
                 {freshness.is_stale ? 'Stale' : 'Fresh'}
               </span>
             )}
+            <Button variant="outline" onClick={handleDownloadCsv}>
+              <Download className="mr-2 h-4 w-4" />
+              Download CSV
+            </Button>
             <Button variant="outline" onClick={() => onRun(analysis)}>
               <Play className="mr-2 h-4 w-4" />
               Run

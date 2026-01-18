@@ -10,6 +10,8 @@ from typing import Optional
 
 import duckdb
 
+from pluto_duck_backend.app.services.duckdb_utils import connect_warehouse
+
 
 class QueryJobStatus(str, Enum):
     PENDING = "pending"
@@ -38,7 +40,7 @@ class QueryExecutionService:
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
-        with duckdb.connect(str(self.warehouse_path)) as con:
+        with connect_warehouse(self.warehouse_path) as con:
             con.execute(
                 """
                 CREATE TABLE IF NOT EXISTS query_history (
@@ -71,7 +73,7 @@ class QueryExecutionService:
 
     def submit(self, run_id: str, sql: str) -> QueryJob:
         submitted_at = datetime.now(UTC)
-        with duckdb.connect(str(self.warehouse_path)) as con:
+        with connect_warehouse(self.warehouse_path) as con:
             con.execute(
                 "INSERT OR REPLACE INTO query_history (job_id, sql, status, submitted_at) VALUES (?, ?, ?, ?)",
                 [run_id, sql, QueryJobStatus.PENDING.value, submitted_at],
@@ -79,7 +81,7 @@ class QueryExecutionService:
         return QueryJob(run_id=run_id, sql=sql, status=QueryJobStatus.PENDING, submitted_at=submitted_at)
 
     def execute(self, run_id: str) -> QueryJob:
-        with duckdb.connect(str(self.warehouse_path)) as con:
+        with connect_warehouse(self.warehouse_path) as con:
             row = con.execute(
                 "SELECT sql, submitted_at FROM query_history WHERE job_id = ?",
                 [run_id],
@@ -117,7 +119,7 @@ class QueryExecutionService:
         return self.fetch(run_id)  # type: ignore[return-value]
 
     def fetch(self, run_id: str) -> Optional[QueryJob]:
-        with duckdb.connect(str(self.warehouse_path)) as con:
+        with connect_warehouse(self.warehouse_path) as con:
             row = con.execute(
                 "SELECT job_id, sql, status, submitted_at, completed_at, result_relation, error, rows_affected FROM query_history WHERE job_id=?",
                 [run_id],
@@ -152,7 +154,7 @@ class QueryExecutionService:
 
         cutoff = datetime.now(UTC) - timedelta(hours=older_than_hours)
         removed_rows = 0
-        with duckdb.connect(str(self.warehouse_path)) as con:
+        with connect_warehouse(self.warehouse_path) as con:
             stale_rows = con.execute(
                 "SELECT job_id, result_relation FROM query_history WHERE completed_at IS NOT NULL AND completed_at < ?",
                 [cutoff],

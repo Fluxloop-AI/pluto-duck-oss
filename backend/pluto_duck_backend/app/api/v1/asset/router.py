@@ -9,16 +9,19 @@ Provides REST endpoints for:
 
 from __future__ import annotations
 
-from datetime import datetime
 from contextlib import contextmanager
-import threading
+from datetime import datetime
+from pathlib import Path
+import tempfile
 from typing import Any, Dict, List, Literal, Optional
 
 import duckdb
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from pluto_duck_backend.app.core.config import get_settings
+from pluto_duck_backend.app.services.duckdb_utils import connect_warehouse
 from pluto_duck_backend.app.services.asset import (
     AssetService,
     get_asset_service,
@@ -216,25 +219,12 @@ class RunHistoryResponse(BaseModel):
 # =============================================================================
 
 
-# DuckDB connection creation/use can throw intermittent "Unique file handle conflict"
-# under concurrent request bursts (e.g. many /freshness calls during board load).
-# We serialize warehouse connections within this router for stability in the local app.
-_duckdb_conn_lock = threading.RLock()
-
-
 @contextmanager
 def _get_connection():
     """Get a DuckDB connection (serialized for stability)."""
     settings = get_settings()
-    with _duckdb_conn_lock:
-        conn = duckdb.connect(str(settings.duckdb.path))
-        try:
-            yield conn
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
+    with connect_warehouse(settings.duckdb.path) as conn:
+        yield conn
 
 
 def _analysis_to_response(analysis) -> AnalysisResponse:
@@ -260,6 +250,14 @@ def _analysis_to_response(analysis) -> AnalysisResponse:
         created_at=analysis.created_at,
         updated_at=analysis.updated_at,
     )
+
+
+def _cleanup_temp_file(path: Path) -> None:
+    """Best-effort cleanup for temp files."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
 
 
 # =============================================================================
@@ -443,6 +441,20 @@ class AnalysisDataResponse(BaseModel):
     total_rows: int
 
 
+class ExportAnalysisRequest(BaseModel):
+    """Request to export analysis results to a CSV file path."""
+
+    file_path: str = Field(..., description="Destination path for the CSV file")
+    force: bool = Field(False, description="Force execution even if fresh")
+
+
+class ExportAnalysisResponse(BaseModel):
+    """Response for analysis export."""
+
+    status: str
+    file_path: str
+
+
 @router.get("/analyses/{analysis_id}/data", response_model=AnalysisDataResponse)
 def get_analysis_data(
     analysis_id: str,
@@ -486,6 +498,107 @@ def get_analysis_data(
             )
         except duckdb.Error as e:
             raise HTTPException(status_code=500, detail=f"Failed to fetch data: {e}")
+
+
+@router.post("/analyses/{analysis_id}/export", response_model=ExportAnalysisResponse)
+def export_analysis_csv(
+    analysis_id: str,
+    request: ExportAnalysisRequest,
+    project_id: Optional[str] = Query(None),
+) -> ExportAnalysisResponse:
+    """Execute an analysis and export results to a CSV file path."""
+    service = get_asset_service(project_id)
+    analysis = service.get_analysis(analysis_id)
+
+    if not analysis:
+        raise HTTPException(status_code=404, detail=f"Analysis '{analysis_id}' not found")
+
+    dest_path = Path(request.file_path).expanduser()
+    if not dest_path.is_absolute():
+        raise HTTPException(status_code=400, detail="file_path must be absolute")
+    if dest_path.exists() and dest_path.is_dir():
+        raise HTTPException(status_code=400, detail="file_path cannot be a directory")
+    if dest_path.suffix.lower() != ".csv":
+        dest_path = dest_path.with_suffix(".csv")
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    safe_path = str(dest_path).replace("'", "''")
+
+    with _get_connection() as conn:
+        try:
+            result = service.run_analysis(
+                analysis_id,
+                conn,
+                force=request.force,
+                continue_on_failure=False,
+            )
+        except AssetNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Analysis '{analysis_id}' not found")
+
+        if not result.success:
+            failed_step = next((s for s in result.step_results if s.status == "failed"), None)
+            detail = failed_step.error if failed_step and failed_step.error else "Execution failed"
+            raise HTTPException(status_code=500, detail=detail)
+
+        try:
+            conn.execute(
+                f"COPY (SELECT * FROM {analysis.result_table}) TO '{safe_path}' (HEADER, DELIMITER ',')"
+            )
+        except duckdb.Error as e:
+            raise HTTPException(status_code=500, detail=f"Failed to export CSV: {e}")
+
+    return ExportAnalysisResponse(status="saved", file_path=str(dest_path))
+
+
+@router.get("/analyses/{analysis_id}/download")
+def download_analysis_csv(
+    analysis_id: str,
+    background_tasks: BackgroundTasks,
+    project_id: Optional[str] = Query(None),
+    force: bool = Query(False, description="Force execution even if fresh"),
+) -> FileResponse:
+    """Execute an analysis and download results as CSV."""
+    service = get_asset_service(project_id)
+    analysis = service.get_analysis(analysis_id)
+
+    if not analysis:
+        raise HTTPException(status_code=404, detail=f"Analysis '{analysis_id}' not found")
+
+    with _get_connection() as conn:
+        try:
+            result = service.run_analysis(
+                analysis_id,
+                conn,
+                force=force,
+                continue_on_failure=False,
+            )
+        except AssetNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Analysis '{analysis_id}' not found")
+
+        if not result.success:
+            failed_step = next((s for s in result.step_results if s.status == "failed"), None)
+            detail = failed_step.error if failed_step and failed_step.error else "Execution failed"
+            raise HTTPException(status_code=500, detail=detail)
+
+        tmp_file = tempfile.NamedTemporaryFile(
+            prefix=f"analysis_{analysis_id}_",
+            suffix=".csv",
+            delete=False,
+        )
+        tmp_path = Path(tmp_file.name)
+        tmp_file.close()
+        safe_path = str(tmp_path).replace("'", "''")
+
+        try:
+            conn.execute(
+                f"COPY (SELECT * FROM {analysis.result_table}) TO '{safe_path}' (HEADER, DELIMITER ',')"
+            )
+        except duckdb.Error as e:
+            _cleanup_temp_file(tmp_path)
+            raise HTTPException(status_code=500, detail=f"Failed to export CSV: {e}")
+
+    background_tasks.add_task(_cleanup_temp_file, tmp_path)
+    filename = f"{analysis_id}.csv"
+    return FileResponse(path=str(tmp_path), media_type="text/csv", filename=filename)
 
 
 # =============================================================================

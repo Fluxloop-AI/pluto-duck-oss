@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, Header, Response
@@ -16,6 +18,16 @@ from pluto_duck_backend.app.services.boards import (
 )
 
 router = APIRouter(prefix="/boards", tags=["boards"])
+logger = logging.getLogger("pluto_duck_backend.boards")
+
+
+def _settings_size(settings: Optional[Dict[str, Any]]) -> int:
+    if settings is None:
+        return 0
+    try:
+        return len(json.dumps(settings))
+    except Exception:
+        return -1
 
 
 # ========== Request/Response Models ==========
@@ -233,21 +245,36 @@ def update_board(
     repo: BoardsRepository = Depends(get_repo),
 ) -> BoardResponse:
     """Update a board."""
+    logger.info(
+        "board_update_start board_id=%s has_settings=%s settings_size=%s has_name=%s has_description=%s",
+        board_id,
+        payload.settings is not None,
+        _settings_size(payload.settings),
+        payload.name is not None,
+        payload.description is not None,
+    )
     board = repo.get_board(board_id)
     if not board:
+        logger.warning("board_update_missing board_id=%s", board_id)
         raise HTTPException(status_code=404, detail="Board not found")
 
-    repo.update_board(
-        board_id=board_id,
-        name=payload.name,
-        description=payload.description,
-        settings=payload.settings,
-    )
+    try:
+        repo.update_board(
+            board_id=board_id,
+            name=payload.name,
+            description=payload.description,
+            settings=payload.settings,
+        )
+    except Exception:
+        logger.exception("board_update_failed board_id=%s", board_id)
+        raise
 
     updated_board = repo.get_board(board_id)
     if not updated_board:
+        logger.error("board_update_reload_failed board_id=%s", board_id)
         raise HTTPException(status_code=500, detail="Failed to update board")
 
+    logger.info("board_update_success board_id=%s updated_at=%s", board_id, updated_board.updated_at)
     return BoardResponse(
         id=updated_board.id,
         project_id=updated_board.project_id,

@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import Any, Dict
 from uuid import uuid4
 
-import duckdb
 from fastapi import UploadFile
 
 from pluto_duck_backend.app.core.config import get_settings
 from pluto_duck_backend.app.services.boards.repository import BoardsRepository
+from pluto_duck_backend.app.services.duckdb_utils import connect_warehouse
 
 
 class BoardsService:
@@ -59,7 +59,7 @@ class BoardsService:
 
         # Execute against DuckDB
         try:
-            with duckdb.connect(str(self.warehouse_path)) as con:
+            with connect_warehouse(self.warehouse_path) as con:
                 result = con.execute(query.query_text).fetchall()
                 columns = [desc[0] for desc in con.description] if con.description else []
 

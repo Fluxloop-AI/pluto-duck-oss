@@ -22,6 +22,40 @@ def _jsonable(value: Any) -> Any:
 def build_schema_tools(*, warehouse_path: Path) -> List[StructuredTool]:
     """Return schema tools bound to a specific DuckDB warehouse."""
 
+    def resolve_table_identifier(
+        con: duckdb.DuckDBPyConnection, table: str, schema: Optional[str]
+    ) -> str:
+        if "." in table or not schema:
+            return table
+
+        row = con.execute(
+            """
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = ? AND table_name = ?
+            LIMIT 1
+            """,
+            [schema, table],
+        ).fetchone()
+        if row:
+            return f"{schema}.{table}"
+
+        if schema == "main":
+            fallback_schema = "analysis"
+            fallback_row = con.execute(
+                """
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = ? AND table_name = ?
+                LIMIT 1
+                """,
+                [fallback_schema, table],
+            ).fetchone()
+            if fallback_row:
+                return f"{fallback_schema}.{table}"
+
+        return f"{schema}.{table}"
+
     def list_tables(
         schema: str = "main",
         limit: int = 200,
@@ -47,8 +81,8 @@ def build_schema_tools(*, warehouse_path: Path) -> List[StructuredTool]:
         }
 
     def describe_table(table: str, schema: str = "main") -> Dict[str, Any]:
-        qualified = f"{schema}.{table}" if schema else table
         with duckdb.connect(str(warehouse_path)) as con:
+            qualified = resolve_table_identifier(con, table, schema)
             info = con.execute(f"PRAGMA table_info('{qualified}')").fetchall()
             # (cid, name, type, notnull, dflt_value, pk)
             columns = [
@@ -68,8 +102,8 @@ def build_schema_tools(*, warehouse_path: Path) -> List[StructuredTool]:
         return {"table": qualified, "columns": columns, "row_count": row_count}
 
     def sample_rows(table: str, schema: str = "main", limit: int = 5) -> Dict[str, Any]:
-        qualified = f"{schema}.{table}" if schema else table
         with duckdb.connect(str(warehouse_path)) as con:
+            qualified = resolve_table_identifier(con, table, schema)
             cur = con.execute(f"SELECT * FROM {qualified} LIMIT ?", [int(limit)])
             cols = [d[0] for d in cur.description] if cur.description else []
             rows = cur.fetchall()

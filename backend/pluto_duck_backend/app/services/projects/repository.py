@@ -6,17 +6,16 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import duckdb
-
 from pluto_duck_backend.app.core.config import get_settings
+from pluto_duck_backend.app.services.duckdb_utils import connect_warehouse
 
 
 class ProjectRepository:
     def __init__(self, warehouse_path: Path) -> None:
         self.warehouse_path = warehouse_path
 
-    def _connect(self) -> duckdb.DuckDBPyConnection:
-        return duckdb.connect(str(self.warehouse_path))
+    def _connect(self):
+        return connect_warehouse(self.warehouse_path)
 
     def _generate_uuid(self) -> str:
         from uuid import uuid4

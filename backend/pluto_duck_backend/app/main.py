@@ -56,6 +56,7 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
         start = time.time()
+        response = None
         try:
             response = await call_next(request)
         except Exception:
@@ -63,14 +64,18 @@ def create_app() -> FastAPI:
             raise
         finally:
             duration_ms = int((time.time() - start) * 1000)
-            # Keep it short; this is for "did the request reach the backend?" debugging.
-            request_logger.info(
-                "request method=%s path=%s status=%s duration_ms=%s",
-                request.method,
-                request.url.path,
-                getattr(locals().get("response"), "status_code", "ERR"),
-                duration_ms,
-            )
+            status = getattr(response, "status_code", "ERR")
+            status_is_error = status == "ERR" or (isinstance(status, int) and status >= 400)
+            should_log = request.method != "GET" or status_is_error
+            if should_log:
+                # Keep it short; this is for "did the request reach the backend?" debugging.
+                request_logger.info(
+                    "request method=%s path=%s status=%s duration_ms=%s",
+                    request.method,
+                    request.url.path,
+                    status,
+                    duration_ms,
+                )
         return response
 
     app.add_middleware(

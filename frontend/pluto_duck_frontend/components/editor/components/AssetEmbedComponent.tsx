@@ -5,7 +5,15 @@ import { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { useLexicalNodeSelection } from '@lexical/react/useLexicalNodeSelection';
 import { mergeRegister } from '@lexical/utils';
-import { Settings, RefreshCw, AlertCircle, Loader2, X, RotateCcw } from 'lucide-react';
+import {
+  Settings,
+  RefreshCw,
+  AlertCircle,
+  Loader2,
+  X,
+  RotateCcw,
+  Download,
+} from 'lucide-react';
 import { 
   $getNodeByKey,
   $getSelection,
@@ -18,7 +26,15 @@ import {
 import { type AssetEmbedConfig, AssetEmbedNode } from '../nodes/AssetEmbedNode';
 import { AssetTableView } from './AssetTableView';
 import { AssetChartView } from './AssetChartView';
-import { getAnalysis, getFreshness, executeAnalysis, getAnalysisData, type Analysis, type FreshnessStatus } from '@/lib/assetsApi';
+import {
+  getAnalysis,
+  getFreshness,
+  executeAnalysis,
+  getAnalysisData,
+  type Analysis,
+  type FreshnessStatus,
+} from '@/lib/assetsApi';
+import { downloadAnalysisCsv } from '@/lib/analysisDownload';
 import { retryAsync } from '@/hooks/useRetry';
 
 // Context for opening config modal
@@ -404,6 +420,19 @@ export function AssetEmbedComponent({
     }
   }, [configModalContext, analysisId, config, handleConfigUpdate]);
 
+  const handleDownloadCsv = useCallback(async () => {
+    try {
+      await downloadAnalysisCsv(analysisId, {
+        projectId,
+        force: true,
+        suggestedName: analysisId,
+      });
+    } catch (error) {
+      console.error('Failed to download CSV:', error);
+      alert('CSV 다운로드에 실패했습니다.');
+    }
+  }, [analysisId, projectId]);
+
   // Determine if UI should be visible
   const showUI = isHovered || isSelected || isLoading || !!error;
 
@@ -563,6 +592,15 @@ export function AssetEmbedComponent({
           )}
         </div>
         <div className="flex items-center gap-0.5">
+          {config.displayType === 'table' && (
+            <button
+              onClick={handleDownloadCsv}
+              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              title="Download CSV"
+            >
+              <Download className="h-3 w-3" />
+            </button>
+          )}
           <button
             onClick={() => loadData(true)}
             disabled={isLoading}

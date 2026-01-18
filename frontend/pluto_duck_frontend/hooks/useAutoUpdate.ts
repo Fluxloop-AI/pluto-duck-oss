@@ -86,6 +86,7 @@ function useAutoUpdateInternal({
   const [error, setError] = useState<string | null>(null);
   const [autoDownload, setAutoDownloadState] = useState(true);
   const downloadInFlightRef = useRef<Promise<void> | null>(null);
+  const downloadAttemptRef = useRef(0);
 
   // Load autoDownload preference from localStorage
   useEffect(() => {
@@ -134,12 +135,19 @@ function useAutoUpdateInternal({
 
     const run = (async () => {
     try {
+      const attempt = (downloadAttemptRef.current += 1);
+      console.info('[AutoUpdate] Download attempt started', { attempt });
       setDownloading(true);
       setError(null);
       setProgress((prev) => (prev > 0 ? prev : 0));
 
       const update = await check();
+      console.info('[AutoUpdate] Check result', {
+        available: update?.available ?? false,
+        version: update?.version ?? null,
+      });
       if (update?.available) {
+        console.info('[AutoUpdate] Downloading update', { version: update.version });
         // Simple progress indicator (indeterminate since we don't have total size)
         setProgress((prev) => Math.max(prev, 10));
         await update.downloadAndInstall((event) => {
@@ -150,10 +158,15 @@ function useAutoUpdateInternal({
             setProgress(100);
           }
         });
+        console.info('[AutoUpdate] Download finished', { version: update.version });
         setReadyToRestart(true);
       }
     } catch (e) {
       console.error('Update download failed:', e);
+      console.error('[AutoUpdate] Download attempt failed', {
+        attempt: downloadAttemptRef.current,
+        error: e instanceof Error ? e.message : String(e),
+      });
       setError(e instanceof Error ? e.message : 'Download failed');
     } finally {
       setDownloading(false);
@@ -269,6 +282,7 @@ function useAutoUpdateInternal({
     if (!autoDownload) return;
     if (!updateAvailable) return;
     if (downloading || readyToRestart) return;
+    console.info('[AutoUpdate] Auto-download triggered', { updateAvailable });
     void downloadUpdate();
   }, [autoDownload, updateAvailable, downloading, readyToRestart, downloadUpdate]);
 

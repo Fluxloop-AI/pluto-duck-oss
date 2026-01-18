@@ -423,6 +423,16 @@ export interface AnalysisData {
   total_rows: number;
 }
 
+export interface ExportAnalysisRequest {
+  file_path: string;
+  force?: boolean;
+}
+
+export interface ExportAnalysisResponse {
+  status: string;
+  file_path: string;
+}
+
 /**
  * Get the result data from an analysis.
  * Must execute the analysis first to have data available.
@@ -450,6 +460,50 @@ export async function getAnalysisData(
   }
 
   return response.json();
+}
+
+/**
+ * Export analysis results to a CSV file path (Tauri runtime).
+ */
+export async function exportAnalysisCsv(
+  analysisId: string,
+  data: ExportAnalysisRequest,
+  projectId?: string
+): Promise<ExportAnalysisResponse> {
+  const url = new URL(`${getBackendUrl()}/api/v1/asset/analyses/${analysisId}/export`);
+  if (projectId) {
+    url.searchParams.set('project_id', projectId);
+  }
+
+  const response = await fetch(url.toString(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to export analysis CSV');
+  }
+
+  return response.json();
+}
+
+/**
+ * Get a download URL for an Analysis CSV export.
+ */
+export function getAnalysisDownloadUrl(
+  analysisId: string,
+  options?: { projectId?: string; force?: boolean }
+): string {
+  const url = new URL(`${getBackendUrl()}/api/v1/asset/analyses/${analysisId}/download`);
+  if (options?.projectId) {
+    url.searchParams.set('project_id', options.projectId);
+  }
+  if (options?.force !== undefined) {
+    url.searchParams.set('force', options.force ? 'true' : 'false');
+  }
+  return url.toString();
 }
 
 // ========== Helper Functions ==========

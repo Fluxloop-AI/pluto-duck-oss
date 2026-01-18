@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import re
-import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -22,13 +21,8 @@ from typing import Any, Dict, List, Literal, Optional
 import duckdb
 
 from pluto_duck_backend.app.core.config import get_settings
+from pluto_duck_backend.app.services.duckdb_utils import connect_warehouse
 from .errors import AssetError, AssetNotFoundError, AssetValidationError
-
-
-# DuckDB connection creation/use can throw intermittent "Unique file handle conflict"
-# under concurrent request bursts. We serialize warehouse connections in this service
-# for stability in the local app.
-_duckdb_conn_lock = threading.RLock()
 
 
 # =============================================================================
@@ -177,15 +171,8 @@ class FileAssetService:
     @contextmanager
     def _get_connection(self):
         """Get a DuckDB connection (serialized for stability)."""
-        with _duckdb_conn_lock:
-            conn = duckdb.connect(str(self.warehouse_path))
-            try:
-                yield conn
-            finally:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
+        with connect_warehouse(self.warehouse_path) as conn:
+            yield conn
 
     def _ensure_metadata_tables(self) -> None:
         """Ensure metadata tables exist."""

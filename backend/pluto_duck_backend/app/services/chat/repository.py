@@ -14,6 +14,7 @@ import time
 from contextlib import contextmanager
 
 from pluto_duck_backend.app.core.config import get_settings
+from pluto_duck_backend.app.services.duckdb_utils import connect_warehouse
 
 _table_init_lock = threading.Lock()
 _duckdb_write_lock = threading.RLock()
@@ -357,8 +358,8 @@ class ChatRepository:
         self._default_project_id = self._ensure_default_project()
         self.ensure_default_settings(DEFAULT_SETTINGS)
 
-    def _connect(self) -> duckdb.DuckDBPyConnection:
-        return duckdb.connect(str(self.warehouse_path))
+    def _connect(self):
+        return connect_warehouse(self.warehouse_path)
 
     @contextmanager
     def _write_connection(self) -> duckdb.DuckDBPyConnection:
@@ -473,13 +474,24 @@ class ChatRepository:
         run_id: Optional[str] = None,
         connection: Optional[duckdb.DuckDBPyConnection] = None,
     ) -> None:
-        owns_connection = connection is None
-        con = connection or None
-        lock = _duckdb_write_lock if owns_connection else None
-        if owns_connection:
-            lock.acquire()
-            con = self._connect()
-        try:
+        if connection is not None:
+            seq = self._next_seq(conversation_id, connection=connection)
+            message_id = self._generate_uuid()
+            connection.execute(
+                """
+                INSERT INTO agent_messages (id, conversation_id, role, content, created_at, seq, run_id)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+                """,
+                [message_id, conversation_id, role, json.dumps(content), seq, run_id],
+            )
+            self._touch_conversation(
+                conversation_id,
+                last_message_preview=self._preview_from_content(content),
+                connection=connection,
+            )
+            return
+
+        with self._write_connection() as con:
             seq = self._next_seq(conversation_id, connection=con)
             message_id = self._generate_uuid()
             con.execute(
@@ -494,10 +506,6 @@ class ChatRepository:
                 last_message_preview=self._preview_from_content(content),
                 connection=con,
             )
-        finally:
-            if owns_connection:
-                con.close()
-                lock.release()
 
     def log_event(self, conversation_id: str, event: Dict[str, Any]) -> None:
         event_id = self._generate_uuid()
@@ -743,17 +751,19 @@ class ChatRepository:
         *,
         connection: Optional[duckdb.DuckDBPyConnection] = None,
     ) -> int:
-        owns_connection = connection is None
-        con = connection or self._connect()
-        try:
+        if connection is not None:
+            seq_row = connection.execute(
+                "SELECT COALESCE(MAX(seq), 0) + 1 FROM agent_messages WHERE conversation_id = ?",
+                [conversation_id],
+            ).fetchone()
+            return seq_row[0] if seq_row else 1
+
+        with self._connect() as con:
             seq_row = con.execute(
                 "SELECT COALESCE(MAX(seq), 0) + 1 FROM agent_messages WHERE conversation_id = ?",
                 [conversation_id],
             ).fetchone()
             return seq_row[0] if seq_row else 1
-        finally:
-            if owns_connection:
-                con.close()
 
     def _touch_conversation(
         self,
@@ -763,9 +773,36 @@ class ChatRepository:
         last_message_preview: Optional[str] = None,
         connection: Optional[duckdb.DuckDBPyConnection] = None,
     ) -> None:
-        owns_connection = connection is None
-        con = connection or self._connect()
-        try:
+        if connection is not None:
+            if status is not None and last_message_preview is not None:
+                connection.execute(
+                    "UPDATE agent_conversations SET status = ?, last_message_preview = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    [status, last_message_preview, conversation_id],
+                )
+            elif status is not None:
+                connection.execute(
+                    "UPDATE agent_conversations SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    [status, conversation_id],
+                )
+            elif last_message_preview is not None:
+                connection.execute(
+                    "UPDATE agent_conversations SET last_message_preview = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    [last_message_preview, conversation_id],
+                )
+            else:
+                try:
+                    connection.execute(
+                        "UPDATE agent_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        [conversation_id],
+                    )
+                except duckdb.TransactionException as exc:
+                    # This touch is non-critical and can conflict during high-frequency event logging.
+                    if self._is_write_conflict(exc):
+                        return
+                    raise
+            return
+
+        with self._connect() as con:
             if status is not None and last_message_preview is not None:
                 con.execute(
                     "UPDATE agent_conversations SET status = ?, last_message_preview = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -792,9 +829,6 @@ class ChatRepository:
                     if self._is_write_conflict(exc):
                         return
                     raise
-        finally:
-            if owns_connection:
-                con.close()
 
     def list_conversations(self, limit: int = 50, offset: int = 0, project_id: Optional[str] = None) -> List[ConversationSummary]:
         with self._connect() as con:

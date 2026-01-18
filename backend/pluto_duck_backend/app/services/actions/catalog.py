@@ -7,6 +7,7 @@ from typing import Callable, Dict, List, Optional
 
 from pluto_duck_backend.app.core.config import get_settings
 from pluto_duck_backend.app.services.execution.manager import get_execution_manager
+from pluto_duck_backend.app.services.duckdb_utils import connect_warehouse
 import duckdb
 
 
@@ -84,9 +85,9 @@ def _persist_catalog(catalog: ActionCatalog) -> None:
     warehouse_path = settings.duckdb.path
     if not warehouse_path.exists():
         return
-    con = duckdb.connect(str(warehouse_path))
     try:
-        con.execute(
+        with connect_warehouse(warehouse_path) as con:
+            con.execute(
             """
             CREATE TABLE IF NOT EXISTS action_catalog (
                 subject TEXT,
@@ -95,18 +96,16 @@ def _persist_catalog(catalog: ActionCatalog) -> None:
                 PRIMARY KEY (subject, action)
             )
             """
-        )
-        con.execute("DELETE FROM action_catalog")
-        for action in catalog.list_actions():
-            con.execute(
-                "INSERT INTO action_catalog (subject, action, description) VALUES (?, ?, ?)",
-                [action.subject, action.action, action.description],
             )
+            con.execute("DELETE FROM action_catalog")
+            for action in catalog.list_actions():
+                con.execute(
+                    "INSERT INTO action_catalog (subject, action, description) VALUES (?, ?, ?)",
+                    [action.subject, action.action, action.description],
+                )
     except duckdb.IOException:
         # Warehouse might not exist yet (e.g., during tests); skip persistence.
         pass
-    finally:
-        con.close()
 
 
 _DEFAULT_CATALOG = _build_default_catalog()

@@ -9,9 +9,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import duckdb
-
 from pluto_duck_backend.app.core.config import get_settings
+from pluto_duck_backend.app.services.duckdb_utils import connect_warehouse
 
 
 @dataclass
@@ -86,9 +85,9 @@ class BoardsRepository:
     def __init__(self, warehouse_path: Path) -> None:
         self.warehouse_path = warehouse_path
 
-    def _connect(self) -> duckdb.DuckDBPyConnection:
+    def _connect(self):
         """Create database connection."""
-        return duckdb.connect(str(self.warehouse_path))
+        return connect_warehouse(self.warehouse_path)
 
     def _generate_uuid(self) -> str:
         """Generate UUID string."""
