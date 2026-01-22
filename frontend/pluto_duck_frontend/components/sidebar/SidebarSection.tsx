@@ -25,7 +25,7 @@ export function SidebarSection({
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <div className="flex items-center justify-between px-[18px] py-2">
+      <div className="flex items-center justify-between py-1 pl-[18px] pr-[14px]">
         <CollapsibleTrigger className="flex items-center gap-1 hover:opacity-80 transition-opacity">
           <span className="text-xs text-muted-foreground font-medium">
             {label}
@@ -40,13 +40,13 @@ export function SidebarSection({
           <button
             type="button"
             onClick={onAddClick}
-            className="flex h-6 w-6 items-center justify-center rounded hover:bg-accent transition-colors"
+            className="flex h-6 w-6 items-center justify-center rounded hover:bg-gray-200 transition-colors"
           >
             <Plus className="h-4 w-4 text-muted-foreground" />
           </button>
         )}
       </div>
-      <CollapsibleContent className="px-[18px]">
+      <CollapsibleContent className="px-[14px]">
         {children}
       </CollapsibleContent>
     </Collapsible>

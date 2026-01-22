@@ -11,7 +11,6 @@ interface DatasetListProps {
   maxItems?: number;
   activeId?: string;
   onSelect: (dataset: Dataset) => void;
-  onBrowseAll: () => void;
 }
 
 export function DatasetList({
@@ -19,7 +18,6 @@ export function DatasetList({
   maxItems = 5,
   activeId,
   onSelect,
-  onBrowseAll,
 }: DatasetListProps) {
   if (datasets.length === 0) {
     return (
@@ -30,7 +28,6 @@ export function DatasetList({
   }
 
   const displayedDatasets = datasets.slice(0, maxItems);
-  const hasMore = datasets.length > maxItems;
 
   const getDatasetName = (dataset: Dataset): string => {
     if ('name' in dataset && dataset.name) {
@@ -47,7 +44,7 @@ export function DatasetList({
   };
 
   return (
-    <div className="space-y-0.5">
+    <div>
       {displayedDatasets.map((dataset) => {
         const id = getDatasetId(dataset);
         const name = getDatasetName(dataset);
@@ -58,25 +55,22 @@ export function DatasetList({
             key={id}
             type="button"
             onClick={() => onSelect(dataset)}
-            className={`flex w-full items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${
-              isActive ? 'bg-accent' : 'hover:bg-accent'
+            className={`flex w-full items-center gap-2 pl-1.5 pr-2.5 py-2.5 rounded-lg cursor-pointer transition-colors ${
+              isActive ? 'bg-black/5' : 'hover:bg-black/5'
             }`}
           >
-            <Table2 className="h-4 w-4 text-muted-foreground shrink-0" />
-            <span className="text-sm text-foreground truncate">{name}</span>
+            <Table2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-[0.8rem] leading-[1rem] text-foreground truncate">{name}</span>
           </button>
         );
       })}
-      {hasMore && (
-        <button
-          type="button"
-          onClick={onBrowseAll}
-          className="flex w-full items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-accent transition-colors"
-        >
-          <FolderSearch className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">Browse all datasets...</span>
-        </button>
-      )}
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 pl-1.5 pr-2.5 py-2.5 rounded-lg cursor-pointer hover:bg-black/5 transition-colors"
+      >
+        <FolderSearch className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-[0.8rem] leading-[1rem] text-muted-foreground">Browse all datasets...</span>
+      </button>
     </div>
   );
 }

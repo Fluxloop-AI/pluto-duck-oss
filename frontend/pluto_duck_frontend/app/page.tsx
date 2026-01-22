@@ -579,11 +579,11 @@ export default function WorkspacePage() {
                   maxItems={5}
                   activeId={undefined}
                   onSelect={() => { /* TODO: Handle dataset selection */ }}
-                  onBrowseAll={() => setMainView('assets')}
                 />
               </SidebarSection>
 
               {/* Boards Section */}
+              <div className="mt-4">
               <SidebarSection
                 label="Board"
                 defaultOpen={true}
@@ -597,6 +597,7 @@ export default function WorkspacePage() {
                   onUpdate={(boardId: string, data: { name?: string }) => updateBoard(boardId, data)}
                 />
               </SidebarSection>
+              </div>
             </div>
 
             <div className="space-y-1 px-3 pb-4">
