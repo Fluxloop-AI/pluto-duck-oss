@@ -8,7 +8,8 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import { Dialog, DialogContent } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { isTauriRuntime } from '../../lib/tauriRuntime';
-import { importFile, type FileType } from '../../lib/fileAssetApi';
+import { importFile, diagnoseFiles, type FileType, type FileDiagnosis, type DiagnoseFileRequest } from '../../lib/fileAssetApi';
+import { DiagnosisResultView } from './DiagnosisResultView';
 
 interface SelectedFile {
   id: string;
@@ -64,7 +65,7 @@ interface AddDatasetModalProps {
   onOpenPostgresModal?: () => void;
 }
 
-type Step = 'select' | 'preview';
+type Step = 'select' | 'preview' | 'diagnose';
 
 // ============================================================================
 // SelectSourceView - Initial view with dropzone and options
@@ -162,7 +163,8 @@ interface FilePreviewViewProps {
   onAddMore: () => void;
   onScan: () => void;
   onClose: () => void;
-  isScanning: boolean;
+  isDiagnosing: boolean;
+  diagnosisError: string | null;
 }
 
 function FilePreviewView({
@@ -172,7 +174,8 @@ function FilePreviewView({
   onAddMore,
   onScan,
   onClose,
-  isScanning,
+  isDiagnosing,
+  diagnosisError,
 }: FilePreviewViewProps) {
   return (
     <div className="flex flex-col h-full">
@@ -218,12 +221,19 @@ function FilePreviewView({
         ))}
       </div>
 
+      {/* Error message */}
+      {diagnosisError && (
+        <div className="px-8 py-3 bg-destructive/10 border-t border-destructive/20">
+          <p className="text-sm text-destructive">{diagnosisError}</p>
+        </div>
+      )}
+
       {/* Footer Actions */}
       <div className="p-8 pt-4 pb-8 flex items-center justify-between border-t border-border">
         <Button
           variant="secondary"
           onClick={onClear}
-          disabled={isScanning}
+          disabled={isDiagnosing}
           className="px-6 py-3.5 rounded-xl"
         >
           Clear
@@ -233,17 +243,17 @@ function FilePreviewView({
           <Button
             variant="secondary"
             onClick={onAddMore}
-            disabled={isScanning}
+            disabled={isDiagnosing}
             className="px-6 py-3.5 rounded-xl"
           >
             Add more
           </Button>
           <Button
             onClick={onScan}
-            disabled={isScanning || files.length === 0}
+            disabled={isDiagnosing || files.length === 0}
             className="px-8 py-3.5 rounded-xl font-semibold"
           >
-            {isScanning ? 'Scanning...' : 'Scan'}
+            {isDiagnosing ? 'Analyzing...' : 'Scan'}
           </Button>
         </div>
       </div>
@@ -266,6 +276,10 @@ export function AddDatasetModal({
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [isDiagnosing, setIsDiagnosing] = useState(false);
+  const [diagnosisResults, setDiagnosisResults] = useState<FileDiagnosis[] | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [diagnosisError, setDiagnosisError] = useState<string | null>(null);
 
   // Ref for hidden file input (web fallback)
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -277,6 +291,10 @@ export function AddDatasetModal({
       setSelectedFiles([]);
       setIsDragOver(false);
       setIsScanning(false);
+      setIsDiagnosing(false);
+      setDiagnosisResults(null);
+      setIsImporting(false);
+      setDiagnosisError(null);
     }
   }, [open]);
 
@@ -461,10 +479,59 @@ export function AddDatasetModal({
     onOpenChange(false);
   }, [onOpenChange]);
 
+  // Diagnose files - called when Scan button is clicked
   const handleScan = useCallback(async () => {
     if (selectedFiles.length === 0) return;
 
-    setIsScanning(true);
+    setIsDiagnosing(true);
+    setDiagnosisError(null);
+
+    // Build diagnosis request
+    const filesToDiagnose: DiagnoseFileRequest[] = [];
+    const errors: string[] = [];
+
+    for (const file of selectedFiles) {
+      if (!file.path) {
+        errors.push(`${file.name}: No file path available (web upload not supported yet)`);
+        continue;
+      }
+
+      const fileType = getFileType(file.name);
+      if (!fileType) {
+        errors.push(`${file.name}: Unsupported file type`);
+        continue;
+      }
+
+      filesToDiagnose.push({
+        file_path: file.path,
+        file_type: fileType,
+      });
+    }
+
+    if (filesToDiagnose.length === 0) {
+      setDiagnosisError(errors.join('\n'));
+      setIsDiagnosing(false);
+      return;
+    }
+
+    try {
+      const response = await diagnoseFiles(projectId, filesToDiagnose);
+      setDiagnosisResults(response.diagnoses);
+      setStep('diagnose');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to diagnose files';
+      setDiagnosisError(message);
+      console.error('Diagnosis failed:', error);
+    } finally {
+      setIsDiagnosing(false);
+    }
+  }, [projectId, selectedFiles]);
+
+  // Import files - called when Import button is clicked on diagnose step
+  const handleConfirmImport = useCallback(async () => {
+    if (selectedFiles.length === 0) return;
+
+    setIsImporting(true);
     let successCount = 0;
     let failCount = 0;
     const errors: string[] = [];
@@ -513,7 +580,7 @@ export function AddDatasetModal({
       }
     }
 
-    setIsScanning(false);
+    setIsImporting(false);
 
     if (successCount > 0) {
       onImportSuccess?.();
@@ -533,6 +600,13 @@ export function AddDatasetModal({
     }
   }, [projectId, selectedFiles, onImportSuccess, onOpenChange]);
 
+  // Go back from diagnose step to preview step
+  const handleBackFromDiagnose = useCallback(() => {
+    setStep('preview');
+    setDiagnosisResults(null);
+    setDiagnosisError(null);
+  }, []);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="p-0 gap-0 sm:max-w-[600px] h-[580px] rounded-3xl overflow-hidden">
@@ -546,7 +620,7 @@ export function AddDatasetModal({
           onChange={handleFileInputChange}
         />
 
-        {step === 'select' ? (
+        {step === 'select' && (
           <SelectSourceView
             onDropFiles={addFiles}
             onFromDeviceClick={handleFromDeviceClick}
@@ -558,7 +632,8 @@ export function AddDatasetModal({
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           />
-        ) : (
+        )}
+        {step === 'preview' && (
           <FilePreviewView
             files={selectedFiles}
             onRemoveFile={removeFile}
@@ -566,7 +641,18 @@ export function AddDatasetModal({
             onAddMore={handleFromDeviceClick}
             onScan={handleScan}
             onClose={handleCancel}
-            isScanning={isScanning}
+            isDiagnosing={isDiagnosing}
+            diagnosisError={diagnosisError}
+          />
+        )}
+        {step === 'diagnose' && diagnosisResults && (
+          <DiagnosisResultView
+            diagnoses={diagnosisResults}
+            files={selectedFiles}
+            onBack={handleBackFromDiagnose}
+            onImport={handleConfirmImport}
+            onClose={handleCancel}
+            isImporting={isImporting}
           />
         )}
       </DialogContent>
