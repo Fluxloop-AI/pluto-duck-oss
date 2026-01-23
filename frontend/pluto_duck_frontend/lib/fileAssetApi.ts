@@ -75,7 +75,7 @@ export interface ColumnSchema {
 }
 
 export interface TypeSuggestion {
-  column: string;
+  column_name: string;
   current_type: string;
   suggested_type: string;
   confidence: number;
@@ -85,7 +85,7 @@ export interface TypeSuggestion {
 export interface FileDiagnosis {
   file_path: string;
   file_type: string;
-  schema: ColumnSchema[];
+  columns: ColumnSchema[];
   missing_values: Record<string, number>;
   row_count: number;
   file_size_bytes: number;

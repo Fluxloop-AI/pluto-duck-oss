@@ -53,7 +53,7 @@ function FileDiagnosisCard({ diagnosis, isExpanded, onToggle }: FileDiagnosisCar
   // Create a map of type suggestions by column name
   const suggestionsByColumn: Record<string, TypeSuggestion> = {};
   for (const suggestion of diagnosis.type_suggestions) {
-    suggestionsByColumn[suggestion.column] = suggestion;
+    suggestionsByColumn[suggestion.column_name] = suggestion;
   }
 
   return (
@@ -70,7 +70,7 @@ function FileDiagnosisCard({ diagnosis, isExpanded, onToggle }: FileDiagnosisCar
           <div className="text-left">
             <p className="font-medium text-foreground">{fileName}</p>
             <p className="text-sm text-muted-foreground">
-              {formatNumber(diagnosis.row_count)} rows, {diagnosis.schema.length} columns, {formatFileSize(diagnosis.file_size_bytes)}
+              {formatNumber(diagnosis.row_count)} rows, {diagnosis.columns.length} columns, {formatFileSize(diagnosis.file_size_bytes)}
             </p>
           </div>
         </div>
@@ -102,7 +102,7 @@ function FileDiagnosisCard({ diagnosis, isExpanded, onToggle }: FileDiagnosisCar
                 </tr>
               </thead>
               <tbody>
-                {diagnosis.schema.map((column: ColumnSchema) => {
+                {diagnosis.columns.map((column: ColumnSchema) => {
                   const missingCount = diagnosis.missing_values[column.name] || 0;
                   const suggestion = suggestionsByColumn[column.name];
                   const hasColumnIssue = missingCount > 0 || suggestion;
