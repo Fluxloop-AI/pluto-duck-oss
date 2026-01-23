@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, useRef } from 'react';
-import { PlusIcon, SettingsIcon, DatabaseIcon, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Package, Database, Layers } from 'lucide-react';
+import { SettingsIcon, DatabaseIcon, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Package, Database, Layers, SquarePen } from 'lucide-react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { isTauriRuntime } from '../lib/tauriRuntime';
 
@@ -17,7 +17,7 @@ import {
   ConnectFolderModal,
 } from '../components/data-sources';
 import { BoardsView, BoardList, CreateBoardModal, BoardSelectorModal, type BoardsViewHandle } from '../components/boards';
-import { SidebarSection, SidebarMenuItem } from '../components/sidebar';
+import { DatasetList } from '../components/sidebar';
 import { DatasetView } from '../components/datasets';
 import { AssetListView } from '../components/assets';
 import { ProjectSelector, CreateProjectModal } from '../components/projects';
@@ -31,6 +31,8 @@ import { Loader } from '../components/ai-elements/loader';
 import { fetchSettings } from '../lib/settingsApi';
 import { loadLocalModel, unloadLocalModel } from '../lib/modelsApi';
 import { fetchDataSources, fetchDataSourceDetail, type DataSource, type DataSourceTable } from '../lib/dataSourcesApi';
+import { listFileAssets, type FileAsset } from '../lib/fileAssetApi';
+import { fetchCachedTables, type CachedTable } from '../lib/sourceApi';
 import { fetchProject, type Project, type ProjectListItem } from '../lib/projectsApi';
 import { useBackendStatus } from '../hooks/useBackendStatus';
 
@@ -63,6 +65,8 @@ export default function WorkspacePage() {
   const [chatPanelCollapsed, setChatPanelCollapsed] = useState(false);
   const [boardSelectorOpen, setBoardSelectorOpen] = useState(false);
   const [pendingSendContent, setPendingSendContent] = useState<string | null>(null);
+  const [sidebarTab, setSidebarTab] = useState<'boards' | 'datasets'>('boards');
+  const [sidebarDatasets, setSidebarDatasets] = useState<(FileAsset | CachedTable)[]>([]);
 
   // Ref for BoardsView to access insertMarkdown
   const boardsViewRef = useRef<BoardsViewHandle>(null);
@@ -241,6 +245,22 @@ export default function WorkspacePage() {
     }
   }, [backendReady, defaultProjectId]);
 
+  // Fetch datasets for sidebar display
+  useEffect(() => {
+    if (!backendReady || !defaultProjectId) return;
+
+    void (async () => {
+      try {
+        const [fileAssets, cachedTables] = await Promise.all([
+          listFileAssets(defaultProjectId),
+          fetchCachedTables(defaultProjectId),
+        ]);
+        setSidebarDatasets([...fileAssets, ...cachedTables]);
+      } catch (error) {
+        console.error('Failed to load sidebar datasets', error);
+      }
+    })();
+  }, [backendReady, defaultProjectId, dataSourcesRefresh]);
 
   useEffect(() => {
     if (!backendReady) return;
@@ -541,45 +561,79 @@ export default function WorkspacePage() {
           sidebarCollapsed ? 'w-0 border-r-0' : 'w-64 border-r'
         }`}>
           <div className="flex h-full w-64 min-w-64 flex-col">
-            <div className="pl-[18px] pr-[14px] pt-3 pb-3">
+            <div className="flex items-center justify-between pl-[18px] pr-[14px] pt-3 pb-3">
               <ProjectSelector
                 currentProject={currentProject}
                 projects={projects}
                 onSelectProject={handleSelectProject}
                 onNewProject={() => setShowCreateProjectModal(true)}
               />
+              <button
+                type="button"
+                onClick={handleCreateBoard}
+                className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-black/10 transition-colors"
+                title="New board"
+              >
+                <SquarePen className="h-4 w-4" />
+              </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto py-2">
-              {/* Dataset - Menu Item */}
-              <SidebarMenuItem
-                icon={<Database className="h-4 w-4" />}
-                label="Dataset"
-                isActive={mainView === 'datasets'}
-                onClick={() => {
-                  setMainView('datasets');
-                  selectBoard(null);
-                }}
+            {/* Tab Slide UI */}
+            <div className="relative mx-3 mb-3 flex rounded-lg bg-card p-1">
+              {/* Sliding indicator */}
+              <div
+                className={`absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-md bg-primary transition-all duration-200 ease-out ${
+                  sidebarTab === 'boards' ? 'left-1' : 'left-[50%]'
+                }`}
               />
+              <button
+                type="button"
+                onClick={() => {
+                  setSidebarTab('boards');
+                  setMainView('boards');
+                }}
+                className={`relative z-10 flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-colors duration-200 ${
+                  sidebarTab === 'boards'
+                    ? 'text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Layers className="h-3.5 w-3.5" />
+                Boards
+              </button>
+              <button
+                type="button"
+                onClick={() => setSidebarTab('datasets')}
+                className={`relative z-10 flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-colors duration-200 ${
+                  sidebarTab === 'datasets'
+                    ? 'text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Database className="h-3.5 w-3.5" />
+                Datasets
+              </button>
+            </div>
 
-              {/* Board - Section Header + List */}
-              <div className="mt-4">
-                <SidebarSection
-                  icon={<Layers className="h-4 w-4" />}
-                  label="Board"
-                  isActive={mainView === 'boards'}
-                  onClick={() => setMainView('boards')}
-                  onAddClick={handleCreateBoard}
-                >
-                  <BoardList
-                    boards={boards}
-                    activeId={activeBoard?.id}
-                    onSelect={(board: Board) => selectBoard(board)}
-                    onDelete={(board: Board) => deleteBoard(board.id)}
-                    onUpdate={(boardId: string, data: { name?: string }) => updateBoard(boardId, data)}
-                  />
-                </SidebarSection>
-              </div>
+            <div className="flex-1 overflow-y-auto px-3">
+              {sidebarTab === 'boards' ? (
+                <BoardList
+                  boards={boards}
+                  activeId={activeBoard?.id}
+                  onSelect={(board: Board) => selectBoard(board)}
+                  onDelete={(board: Board) => deleteBoard(board.id)}
+                  onUpdate={(boardId: string, data: { name?: string }) => updateBoard(boardId, data)}
+                />
+              ) : (
+                <DatasetList
+                  datasets={sidebarDatasets}
+                  maxItems={3}
+                  onSelect={() => {}}
+                  onBrowseAll={() => {
+                    setMainView('datasets');
+                  }}
+                />
+              )}
             </div>
 
             <div className="space-y-1 px-3 pb-4">
