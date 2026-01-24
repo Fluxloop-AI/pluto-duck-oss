@@ -106,7 +106,6 @@ type Step = 'select' | 'preview' | 'diagnose';
 // ============================================================================
 
 interface SelectSourceViewProps {
-  onDropFiles: (files: SelectedFile[]) => void;
   onFromDeviceClick: () => void;
   onGoogleSheetsClick: () => void;
   onDatabaseClick: () => void;
@@ -309,7 +308,6 @@ export function AddDatasetModal({
   const [step, setStep] = useState<Step>('select');
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
   const [isDiagnosing, setIsDiagnosing] = useState(false);
   const [diagnosisResults, setDiagnosisResults] = useState<FileDiagnosis[] | null>(null);
   const [isImporting, setIsImporting] = useState(false);
@@ -327,7 +325,6 @@ export function AddDatasetModal({
       setStep('select');
       setSelectedFiles([]);
       setIsDragOver(false);
-      setIsScanning(false);
       setIsDiagnosing(false);
       setDiagnosisResults(null);
       setIsImporting(false);
@@ -753,7 +750,6 @@ export function AddDatasetModal({
 
         {step === 'select' && (
           <SelectSourceView
-            onDropFiles={addFiles}
             onFromDeviceClick={handleFromDeviceClick}
             onGoogleSheetsClick={handleGoogleSheetsClick}
             onDatabaseClick={handleDatabaseClick}

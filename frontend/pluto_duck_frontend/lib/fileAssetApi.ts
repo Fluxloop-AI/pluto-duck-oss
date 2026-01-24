@@ -227,8 +227,6 @@ export async function diagnoseFiles(
 ): Promise<DiagnoseFilesResponse> {
   const baseUrl = buildUrl('/files/diagnose', projectId);
   const url = `${baseUrl}&use_cache=${useCache}`;
-  console.log('[fileAssetApi] diagnoseFiles URL:', url);
-  console.log('[fileAssetApi] diagnoseFiles request:', { files });
 
   const response = await fetch(url, {
     method: 'POST',
@@ -236,9 +234,7 @@ export async function diagnoseFiles(
     body: JSON.stringify({ files }),
   });
 
-  console.log('[fileAssetApi] diagnoseFiles response status:', response.status);
   const result = await handleResponse<DiagnoseFilesResponse>(response);
-  console.log('[fileAssetApi] diagnoseFiles result:', result);
   return result;
 }
 

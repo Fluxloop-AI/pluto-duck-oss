@@ -125,7 +125,7 @@ function FileDiagnosisCard({ diagnosis, isExpanded, onToggle }: FileDiagnosisCar
                             <span className="flex items-center gap-1 text-xs text-primary">
                               <ArrowRight size={12} />
                               <span className="font-mono">{suggestion.suggested_type}</span>
-                              <span className="text-muted-foreground">({Math.round(suggestion.confidence * 100)}%)</span>
+                              <span className="text-muted-foreground">({Math.round(suggestion.confidence)}%)</span>
                             </span>
                           )}
                         </div>
