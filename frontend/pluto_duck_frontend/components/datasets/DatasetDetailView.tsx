@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ArrowLeft, FileText, History, Table, RefreshCw } from 'lucide-react';
+import { History, Pencil, RefreshCw } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { AssetTableView } from '../editor/components/AssetTableView';
 import { previewFileData, type FileAsset, type FilePreview } from '../../lib/fileAssetApi';
 import { fetchCachedTablePreview, type CachedTable, type CachedTablePreview } from '../../lib/sourceApi';
@@ -13,7 +14,6 @@ type DatasetTab = 'summary' | 'history' | 'table';
 interface DatasetDetailViewProps {
   projectId: string;
   dataset: Dataset;
-  onBack: () => void;
 }
 
 function isFileAsset(dataset: Dataset): dataset is FileAsset {
@@ -30,9 +30,8 @@ function getDatasetName(dataset: Dataset): string {
 export function DatasetDetailView({
   projectId,
   dataset,
-  onBack,
 }: DatasetDetailViewProps) {
-  const [activeTab, setActiveTab] = useState<DatasetTab>('table');
+  const [activeTab, setActiveTab] = useState<DatasetTab>('summary');
   const [preview, setPreview] = useState<FilePreview | CachedTablePreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,44 +62,35 @@ export function DatasetDetailView({
     void loadPreview();
   }, [projectId, dataset, activeTab]);
 
-  const tabs: { id: DatasetTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'summary', label: 'Summary', icon: <FileText className="h-3.5 w-3.5" /> },
-    { id: 'history', label: 'History', icon: <History className="h-3.5 w-3.5" /> },
-    { id: 'table', label: 'Table', icon: <Table className="h-3.5 w-3.5" /> },
+  const tabs: { id: DatasetTab; label: string }[] = [
+    { id: 'summary', label: 'Summary' },
+    { id: 'history', label: 'History' },
+    { id: 'table', label: 'Table' },
   ];
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center gap-3 border-b px-6 py-4">
-        <button
-          type="button"
-          onClick={onBack}
-          className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-muted transition-colors"
-          title="Back to datasets"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </button>
-        <h1 className="text-lg font-semibold truncate">{getDatasetName(dataset)}</h1>
-      </div>
-
       {/* Tab Bar */}
-      <div className="flex items-center gap-1 border-b px-6 pt-2">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-1.5 rounded-t-lg px-3 py-2 text-sm transition-colors ${
-              activeTab === tab.id
-                ? 'bg-muted text-foreground'
-                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-            }`}
-          >
-            {tab.icon}
-            {tab.label}
-          </button>
-        ))}
+      <div className="flex items-center bg-background pt-2">
+        <div className="w-full max-w-4xl pl-6">
+          <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  'rounded-lg px-3 py-1.5 text-sm transition-colors',
+                  activeTab === tab.id
+                    ? 'bg-muted text-foreground'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Content */}
@@ -113,11 +103,7 @@ export function DatasetDetailView({
           />
         )}
         {activeTab === 'summary' && (
-          <PlaceholderTabContent
-            icon={<FileText className="h-8 w-8 text-muted-foreground" />}
-            title="Coming soon"
-            description="Dataset schema, statistics, and metadata"
-          />
+          <SummaryTabContent dataset={dataset} />
         )}
         {activeTab === 'history' && (
           <PlaceholderTabContent
@@ -127,6 +113,28 @@ export function DatasetDetailView({
           />
         )}
       </div>
+    </div>
+  );
+}
+
+interface SummaryTabContentProps {
+  dataset: Dataset;
+}
+
+function SummaryTabContent({ dataset }: SummaryTabContentProps) {
+  return (
+    <div className="max-w-4xl">
+      <div className="flex items-center gap-2">
+        <h2 className="text-xl font-semibold">{getDatasetName(dataset)}</h2>
+        <button
+          type="button"
+          className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+          title="Rename dataset"
+        >
+          <Pencil className="h-4 w-4" />
+        </button>
+      </div>
+      <p className="mt-2 text-sm text-muted-foreground">6 Columns • 123 Rows</p>
     </div>
   );
 }
