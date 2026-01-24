@@ -547,15 +547,6 @@ export default function WorkspacePage() {
           )}
         </button>
 
-        <button
-          onClick={() => setDataSourcesOpen(true)}
-          className="ml-2 flex h-7 items-center gap-1.5 rounded-md border border-muted-foreground/40 bg-white px-2.5 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground hover:border-muted-foreground/60"
-          title="Connect data sources"
-        >
-          <DatabaseIcon className="h-3.5 w-3.5" />
-          <span>Connect Data</span>
-        </button>
-
         <div
           data-tauri-drag-region
           className="flex h-full flex-1 select-none items-center justify-center gap-2"
@@ -710,6 +701,14 @@ export default function WorkspacePage() {
             </div>
 
             <div className="space-y-1 px-3 pb-4">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-lg px-[10px] py-2 text-sm hover:bg-black/10 transition-colors"
+                onClick={() => setDataSourcesOpen(true)}
+              >
+                <DatabaseIcon className="h-4 w-4" />
+                <span>Connect Data</span>
+              </button>
               <button
                 type="button"
                 className={`flex w-full items-center gap-2 rounded-lg px-[10px] py-2 text-sm transition-colors ${
