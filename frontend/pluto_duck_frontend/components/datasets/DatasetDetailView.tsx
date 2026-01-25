@@ -160,7 +160,7 @@ export function DatasetDetailView({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto py-6 px-8">
-        <div className="max-w-4xl space-y-8">
+        <div className="max-w-4xl space-y-12">
           {/* Shared Header */}
           <DatasetHeader dataset={dataset} />
 
@@ -297,7 +297,7 @@ function SummaryTabContent({
   }, [createdAt]);
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-12">
       {/* DATA CONTEXT Section */}
       <div className="space-y-4">
         <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -358,7 +358,7 @@ function SummaryTabContent({
       </div>
 
       {/* Divider */}
-      <div className="border-t border-border/50" />
+      <div className="border-t border-border/50 my-12" />
 
       {/* ORIGINAL SOURCES Section */}
       <div className="space-y-4">
@@ -428,7 +428,7 @@ function SummaryTabContent({
       </div>
 
       {/* Divider */}
-      <div className="border-t border-border/50" />
+      <div className="border-t border-border/50 my-12" />
 
       {/* SAMPLE DATA Section */}
       <div className="space-y-4">
