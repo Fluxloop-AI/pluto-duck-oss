@@ -1,11 +1,31 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { History, Pencil, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  History,
+  Pencil,
+  RefreshCw,
+  MoreHorizontal,
+  FileSpreadsheet,
+  Table2,
+  Plus,
+  FileText,
+  Bot,
+  ChevronRight,
+  Download,
+  Trash2,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AssetTableView } from '../editor/components/AssetTableView';
 import { previewFileData, type FileAsset, type FilePreview } from '../../lib/fileAssetApi';
 import { fetchCachedTablePreview, type CachedTable, type CachedTablePreview } from '../../lib/sourceApi';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 export type Dataset = FileAsset | CachedTable;
 
@@ -15,6 +35,10 @@ interface DatasetDetailViewProps {
   projectId: string;
   dataset: Dataset;
 }
+
+// =============================================================================
+// Utility Functions
+// =============================================================================
 
 function isFileAsset(dataset: Dataset): dataset is FileAsset {
   return 'file_type' in dataset;
@@ -27,6 +51,42 @@ function getDatasetName(dataset: Dataset): string {
   return dataset.local_table;
 }
 
+function formatFileSize(bytes: number | null): string {
+  if (bytes === null || bytes === undefined) return '-';
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
+}
+
+function formatDate(dateString: string | null): string {
+  if (!dateString) return '-';
+  const date = new Date(dateString);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${year}.${month}.${day} ${hours}:${minutes}`;
+}
+
+// =============================================================================
+// Types
+// =============================================================================
+
+interface AgentAnalysis {
+  summary: string;
+  bulletPoints: string[];
+  generatedAt: string;
+}
+
+interface SourceFile {
+  name: string;
+  rows: number | null;
+  columns: number | null;
+  size: number | null;
+}
+
 export function DatasetDetailView({
   projectId,
   dataset,
@@ -36,9 +96,16 @@ export function DatasetDetailView({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load table preview data when dataset changes or tab becomes 'table'
+  // Reset preview when dataset changes
   useEffect(() => {
-    if (activeTab !== 'table') return;
+    setPreview(null);
+    setError(null);
+  }, [dataset]);
+
+  // Load table preview data when dataset changes or tab becomes 'table' or 'summary'
+  useEffect(() => {
+    if (activeTab !== 'table' && activeTab !== 'summary') return;
+    if (preview !== null) return; // Don't reload if we already have data
 
     const loadPreview = async () => {
       setLoading(true);
@@ -60,7 +127,7 @@ export function DatasetDetailView({
     };
 
     void loadPreview();
-  }, [projectId, dataset, activeTab]);
+  }, [projectId, dataset, activeTab, preview]);
 
   const tabs: { id: DatasetTab; label: string }[] = [
     { id: 'summary', label: 'Summary' },
@@ -103,7 +170,12 @@ export function DatasetDetailView({
           />
         )}
         {activeTab === 'summary' && (
-          <SummaryTabContent dataset={dataset} />
+          <SummaryTabContent
+            dataset={dataset}
+            preview={preview}
+            previewLoading={loading}
+            setActiveTab={setActiveTab}
+          />
         )}
         {activeTab === 'history' && (
           <PlaceholderTabContent
@@ -119,22 +191,292 @@ export function DatasetDetailView({
 
 interface SummaryTabContentProps {
   dataset: Dataset;
+  preview: FilePreview | CachedTablePreview | null;
+  previewLoading: boolean;
+  setActiveTab: (tab: DatasetTab) => void;
 }
 
-function SummaryTabContent({ dataset }: SummaryTabContentProps) {
+function SummaryTabContent({
+  dataset,
+  preview,
+  previewLoading,
+  setActiveTab,
+}: SummaryTabContentProps) {
+  const [memo, setMemo] = useState('');
+  const [memoSaveTimeout, setMemoSaveTimeout] = useState<NodeJS.Timeout | null>(null);
+
+  // Get dataset ID for localStorage key
+  const datasetId = isFileAsset(dataset) ? dataset.id : dataset.id;
+
+  // Load memo from localStorage on mount
+  useEffect(() => {
+    const savedMemo = localStorage.getItem(`dataset-memo-${datasetId}`);
+    if (savedMemo) {
+      setMemo(savedMemo);
+    }
+  }, [datasetId]);
+
+  // Debounced save to localStorage
+  const handleMemoChange = useCallback((value: string) => {
+    setMemo(value);
+    if (memoSaveTimeout) {
+      clearTimeout(memoSaveTimeout);
+    }
+    const timeout = setTimeout(() => {
+      localStorage.setItem(`dataset-memo-${datasetId}`, value);
+    }, 500);
+    setMemoSaveTimeout(timeout);
+  }, [datasetId, memoSaveTimeout]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (memoSaveTimeout) {
+        clearTimeout(memoSaveTimeout);
+      }
+    };
+  }, [memoSaveTimeout]);
+
+  // Build metadata
+  const rowCount = isFileAsset(dataset) ? dataset.row_count : dataset.row_count;
+  const columnCount = isFileAsset(dataset) ? dataset.column_count : null;
+  const fileSize = isFileAsset(dataset) ? dataset.file_size_bytes : null;
+  const createdAt = isFileAsset(dataset) ? dataset.created_at : dataset.cached_at;
+  const originalFileName = isFileAsset(dataset) ? dataset.name : dataset.source_table;
+
+  // Mock Agent Analysis (based on dataset characteristics)
+  const mockAnalysis = useMemo((): AgentAnalysis => {
+    const name = getDatasetName(dataset);
+    return {
+      summary: `Meta Ads Manager에서 추출한 것으로 보이는 광고 성과 데이터입니다. 2개 캠페인(신규가입_프로모션, 리타겟팅_장바구니)의 10일간(1/22-31) 일별 퍼포먼스를 담고 있습니다.`,
+      bulletPoints: [
+        '캠페인별 효율(CPC, CTR, ROAS) 비교',
+        '일별 성과 추이 및 이상 탐지',
+        '비용 대비 전환 최적화 포인트 탐색',
+      ],
+      generatedAt: new Date().toISOString(),
+    };
+  }, [dataset]);
+
+  // Source files (currently just the main file)
+  const sourceFiles = useMemo((): SourceFile[] => {
+    return [{
+      name: originalFileName || 'Unknown',
+      rows: rowCount,
+      columns: columnCount,
+      size: fileSize,
+    }];
+  }, [originalFileName, rowCount, columnCount, fileSize]);
+
   return (
-    <div className="max-w-4xl">
-      <div className="flex items-center gap-2">
-        <h2 className="text-xl font-semibold">{getDatasetName(dataset)}</h2>
-        <button
-          type="button"
-          className="p-1 text-muted-foreground hover:text-foreground transition-colors"
-          title="Rename dataset"
-        >
-          <Pencil className="h-4 w-4" />
-        </button>
+    <div className="max-w-4xl space-y-8">
+      {/* Header Section */}
+      <div>
+        <div className="flex items-center gap-2">
+          <FileSpreadsheet className="h-5 w-5 text-muted-foreground" />
+          <h2 className="text-xl font-semibold">{getDatasetName(dataset)}</h2>
+          <button
+            type="button"
+            className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+            title="Rename dataset"
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem>
+                <Download className="h-4 w-4" />
+                <span>Export as CSV</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="text-destructive">
+                <Trash2 className="h-4 w-4" />
+                <span>Delete dataset</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* Metadata Line */}
+        <p className="mt-2 text-sm text-muted-foreground">
+          {sourceFiles.length} {sourceFiles.length === 1 ? 'Source' : 'Sources'}
+          {columnCount !== null && <> · {columnCount} Columns</>}
+          {rowCount !== null && <> · {rowCount.toLocaleString()} Rows</>}
+          {createdAt && <> · Created at {formatDate(createdAt)}</>}
+          {fileSize !== null && <> · {formatFileSize(fileSize)}</>}
+        </p>
       </div>
-      <p className="mt-2 text-sm text-muted-foreground">6 Columns • 123 Rows</p>
+
+      {/* DATA CONTEXT Section */}
+      <div className="space-y-4">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Data Context
+        </h3>
+
+        {/* Agent Analysis Card */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Bot className="h-4 w-4" />
+              <span>Agent Analysis</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Pencil className="h-3 w-3" />
+                <span>Edit</span>
+              </button>
+              <button
+                type="button"
+                className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <RefreshCw className="h-3 w-3" />
+                <span>Regenerate</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border bg-muted/30 p-4">
+            <p className="text-sm leading-relaxed">{mockAnalysis.summary}</p>
+            <ul className="mt-3 space-y-1.5">
+              {mockAnalysis.bulletPoints.map((point, index) => (
+                <li key={index} className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-muted-foreground/50 shrink-0" />
+                  <span>{point}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      {/* Memo Section */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <FileText className="h-4 w-4" />
+          <span>Memo</span>
+        </div>
+        <textarea
+          value={memo}
+          onChange={(e) => handleMemoChange(e.target.value)}
+          placeholder="Add your memo here..."
+          className="w-full min-h-[120px] rounded-lg border border-border bg-background p-4 text-sm resize-none placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+      </div>
+
+      {/* ORIGINAL SOURCES Section */}
+      <div className="space-y-4">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Original Sources
+        </h3>
+
+        <div className="space-y-2">
+          {sourceFiles.map((file, index) => (
+            <div
+              key={index}
+              className="flex items-center gap-3 rounded-lg border border-border p-3 hover:bg-muted/30 transition-colors"
+            >
+              <div className="flex h-9 w-9 items-center justify-center rounded bg-muted">
+                <Table2 className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{file.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {file.rows !== null && <>{file.rows.toLocaleString()} rows</>}
+                  {file.columns !== null && <> · {file.columns} columns</>}
+                  {file.size !== null && <> · {formatFileSize(file.size)}</>}
+                </p>
+              </div>
+            </div>
+          ))}
+
+          {/* Add More Data Button */}
+          <button
+            type="button"
+            className="flex items-center gap-2 w-fit rounded-lg border border-dashed border-border px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Add More Data</span>
+          </button>
+        </div>
+      </div>
+
+      {/* SAMPLE DATA Section */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Sample Data
+          </h3>
+          <button
+            type="button"
+            onClick={() => setActiveTab('table')}
+            className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <span>View Full</span>
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+
+        {previewLoading ? (
+          <div className="flex h-48 items-center justify-center rounded-lg border border-border">
+            <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : preview && preview.rows.length > 0 ? (
+          <div className="rounded-lg border border-border overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-muted/50">
+                    {preview.columns.map((col, i) => (
+                      <th
+                        key={i}
+                        className="px-4 py-3 text-left text-xs font-medium text-muted-foreground whitespace-nowrap"
+                      >
+                        {col}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.rows.slice(0, 5).map((row, rowIndex) => (
+                    <tr
+                      key={rowIndex}
+                      className="border-t border-border/50 hover:bg-muted/30 transition-colors"
+                    >
+                      {row.map((cell, cellIndex) => (
+                        <td
+                          key={cellIndex}
+                          className="px-4 py-2.5 text-sm whitespace-nowrap"
+                        >
+                          {cell === null || cell === undefined
+                            ? <span className="text-muted-foreground">-</span>
+                            : typeof cell === 'number'
+                              ? cell.toLocaleString()
+                              : String(cell)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="flex h-48 items-center justify-center rounded-lg border border-border">
+            <p className="text-sm text-muted-foreground">No preview data available</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
