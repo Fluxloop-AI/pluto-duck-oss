@@ -5,27 +5,17 @@ import {
   History,
   Pencil,
   RefreshCw,
-  MoreHorizontal,
-  FileSpreadsheet,
   Table2,
   Plus,
   FileText,
   Bot,
   ChevronRight,
-  Download,
-  Trash2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AssetTableView } from '../editor/components/AssetTableView';
 import { previewFileData, type FileAsset, type FilePreview } from '../../lib/fileAssetApi';
 import { fetchCachedTablePreview, type CachedTable, type CachedTablePreview } from '../../lib/sourceApi';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { DatasetHeader } from './DatasetHeader';
 
 export type Dataset = FileAsset | CachedTable;
 
@@ -40,18 +30,18 @@ interface DatasetDetailViewProps {
 // Utility Functions
 // =============================================================================
 
-function isFileAsset(dataset: Dataset): dataset is FileAsset {
+export function isFileAsset(dataset: Dataset): dataset is FileAsset {
   return 'file_type' in dataset;
 }
 
-function getDatasetName(dataset: Dataset): string {
+export function getDatasetName(dataset: Dataset): string {
   if (isFileAsset(dataset)) {
     return dataset.name || dataset.table_name;
   }
   return dataset.local_table;
 }
 
-function formatFileSize(bytes: number | null): string {
+export function formatFileSize(bytes: number | null): string {
   if (bytes === null || bytes === undefined) return '-';
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
@@ -59,7 +49,7 @@ function formatFileSize(bytes: number | null): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
 }
 
-function formatDate(dateString: string | null): string {
+export function formatDate(dateString: string | null): string {
   if (!dateString) return '-';
   const date = new Date(dateString);
   const year = date.getFullYear();
@@ -162,28 +152,37 @@ export function DatasetDetailView({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto py-6 px-8">
-        {activeTab === 'table' && (
-          <TableTabContent
-            preview={preview}
-            loading={loading}
-            error={error}
-          />
-        )}
-        {activeTab === 'summary' && (
-          <SummaryTabContent
-            dataset={dataset}
-            preview={preview}
-            previewLoading={loading}
-            setActiveTab={setActiveTab}
-          />
-        )}
-        {activeTab === 'history' && (
-          <PlaceholderTabContent
-            icon={<History className="h-8 w-8 text-muted-foreground" />}
-            title="Coming soon"
-            description="Change history and version tracking"
-          />
-        )}
+        <div className="max-w-4xl space-y-8">
+          {/* Shared Header */}
+          <DatasetHeader dataset={dataset} />
+
+          {/* Divider */}
+          <div className="border-t border-border/50" />
+
+          {/* Tab Content */}
+          {activeTab === 'table' && (
+            <TableTabContent
+              preview={preview}
+              loading={loading}
+              error={error}
+            />
+          )}
+          {activeTab === 'summary' && (
+            <SummaryTabContent
+              dataset={dataset}
+              preview={preview}
+              previewLoading={loading}
+              setActiveTab={setActiveTab}
+            />
+          )}
+          {activeTab === 'history' && (
+            <PlaceholderTabContent
+              icon={<History className="h-8 w-8 text-muted-foreground" />}
+              title="Coming soon"
+              description="Change history and version tracking"
+            />
+          )}
+        </div>
       </div>
     </div>
   );
@@ -269,55 +268,7 @@ function SummaryTabContent({
   }, [originalFileName, rowCount, columnCount, fileSize]);
 
   return (
-    <div className="max-w-4xl space-y-8">
-      {/* Header Section */}
-      <div>
-        <div className="flex items-center gap-2">
-          <FileSpreadsheet className="h-5 w-5 text-muted-foreground" />
-          <h2 className="text-xl font-semibold">{getDatasetName(dataset)}</h2>
-          <button
-            type="button"
-            className="p-1 text-muted-foreground hover:text-foreground transition-colors"
-            title="Rename dataset"
-          >
-            <Pencil className="h-4 w-4" />
-          </button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className="p-1 text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuItem>
-                <Download className="h-4 w-4" />
-                <span>Export as CSV</span>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-destructive">
-                <Trash2 className="h-4 w-4" />
-                <span>Delete dataset</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-
-        {/* Metadata Line */}
-        <p className="mt-2 text-sm text-muted-foreground">
-          {sourceFiles.length} {sourceFiles.length === 1 ? 'Source' : 'Sources'}
-          {columnCount !== null && <> · {columnCount} Columns</>}
-          {rowCount !== null && <> · {rowCount.toLocaleString()} Rows</>}
-          {createdAt && <> · Created at {formatDate(createdAt)}</>}
-          {fileSize !== null && <> · {formatFileSize(fileSize)}</>}
-        </p>
-      </div>
-
-      {/* Divider */}
-      <div className="border-t border-border/50" />
-
+    <div className="space-y-8">
       {/* DATA CONTEXT Section */}
       <div className="space-y-4">
         <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
