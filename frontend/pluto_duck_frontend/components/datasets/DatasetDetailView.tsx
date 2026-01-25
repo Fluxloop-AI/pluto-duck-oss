@@ -315,6 +315,9 @@ function SummaryTabContent({
         </p>
       </div>
 
+      {/* Divider */}
+      <div className="border-t border-border/50" />
+
       {/* DATA CONTEXT Section */}
       <div className="space-y-4">
         <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -346,7 +349,7 @@ function SummaryTabContent({
             </div>
           </div>
 
-          <div className="rounded-lg border border-border bg-muted/30 p-4">
+          <div className="rounded-lg bg-muted/50 p-4">
             <p className="text-sm leading-relaxed">{mockAnalysis.summary}</p>
             <ul className="mt-3 space-y-1.5">
               {mockAnalysis.bulletPoints.map((point, index) => (
@@ -370,9 +373,12 @@ function SummaryTabContent({
           value={memo}
           onChange={(e) => handleMemoChange(e.target.value)}
           placeholder="Add your memo here..."
-          className="w-full min-h-[120px] rounded-lg border border-border bg-background p-4 text-sm resize-none placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
+          className="w-full min-h-[120px] rounded-lg bg-muted/50 p-4 text-sm resize-none placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
         />
       </div>
+
+      {/* Divider */}
+      <div className="border-t border-border/50" />
 
       {/* ORIGINAL SOURCES Section */}
       <div className="space-y-4">
@@ -384,7 +390,7 @@ function SummaryTabContent({
           {sourceFiles.map((file, index) => (
             <div
               key={index}
-              className="flex items-center gap-3 rounded-lg border border-border p-3 hover:bg-muted/30 transition-colors"
+              className="flex items-center gap-3 rounded-lg bg-muted/50 p-3 hover:bg-muted/70 transition-colors"
             >
               <div className="flex h-9 w-9 items-center justify-center rounded bg-muted">
                 <Table2 className="h-4 w-4 text-muted-foreground" />
@@ -403,13 +409,16 @@ function SummaryTabContent({
           {/* Add More Data Button */}
           <button
             type="button"
-            className="flex items-center gap-2 w-fit rounded-lg border border-dashed border-border px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+            className="flex items-center gap-2 w-fit rounded-lg border border-border px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
           >
             <Plus className="h-4 w-4" />
             <span>Add More Data</span>
           </button>
         </div>
       </div>
+
+      {/* Divider */}
+      <div className="border-t border-border/50" />
 
       {/* SAMPLE DATA Section */}
       <div className="space-y-4">
@@ -513,12 +522,22 @@ function TableTabContent({ preview, loading, error }: TableTabContentProps) {
   }
 
   return (
-    <AssetTableView
-      columns={preview.columns}
-      rows={preview.rows}
-      totalRows={preview.total_rows ?? preview.rows.length}
-      rowsPerPage={10}
-    />
+    <div className="space-y-6">
+      <AssetTableView
+        columns={preview.columns}
+        rows={preview.rows}
+        totalRows={preview.total_rows ?? preview.rows.length}
+      />
+
+      {/* Add More Data Button */}
+      <button
+        type="button"
+        className="flex items-center gap-2 w-fit rounded-lg border border-border px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+      >
+        <Plus className="h-4 w-4" />
+        <span>Add More Data</span>
+      </button>
+    </div>
   );
 }
 
