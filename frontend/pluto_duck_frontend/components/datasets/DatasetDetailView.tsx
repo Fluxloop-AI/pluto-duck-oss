@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Stethoscope,
   Pencil,
   RefreshCw,
   Table2,
@@ -10,6 +9,10 @@ import {
   FileText,
   Bot,
   ChevronRight,
+  Check,
+  Search,
+  MessageSquare,
+  ArrowRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AssetTableView } from '../editor/components/AssetTableView';
@@ -77,7 +80,7 @@ interface SourceFile {
   size: number | null;
 }
 
-interface DiagnosisItem {
+interface HistoryItem {
   id: string;
   title: string;
   timestamp: string;
@@ -181,11 +184,7 @@ export function DatasetDetailView({
             />
           )}
           {activeTab === 'diagnosis' && (
-            <PlaceholderTabContent
-              icon={<Stethoscope className="h-8 w-8 text-muted-foreground" />}
-              title="Coming soon"
-              description="Dataset diagnosis and analysis"
-            />
+            <DiagnosisTabContent />
           )}
         </div>
       </div>
@@ -250,7 +249,6 @@ function SummaryTabContent({
 
   // Mock Agent Analysis (based on dataset characteristics)
   const mockAnalysis = useMemo((): AgentAnalysis => {
-    const name = getDatasetName(dataset);
     return {
       summary: `Meta Ads Manager에서 추출한 것으로 보이는 광고 성과 데이터입니다. 2개 캠페인(신규가입_프로모션, 리타겟팅_장바구니)의 10일간(1/22-31) 일별 퍼포먼스를 담고 있습니다.`,
       bulletPoints: [
@@ -273,7 +271,7 @@ function SummaryTabContent({
   }, [originalFileName, rowCount, columnCount, fileSize]);
 
   // Mock diagnosis data based on dataset creation date
-  const diagnosisItems = useMemo((): DiagnosisItem[] => {
+  const historyItems = useMemo((): HistoryItem[] => {
     const createdDate = createdAt ? new Date(createdAt) : new Date();
     const processedDate = new Date(createdDate);
     processedDate.setDate(processedDate.getDate() + 1);
@@ -399,7 +397,7 @@ function SummaryTabContent({
           <div className="pt-4 space-y-3">
             <span className="text-sm text-muted-foreground">Diagnosis</span>
             <div className="space-y-4">
-              {diagnosisItems.map((item) => (
+              {historyItems.map((item) => (
                 <div key={item.id} className="flex items-start gap-3">
                   <span
                     className={cn(
@@ -468,6 +466,519 @@ function SummaryTabContent({
   );
 }
 
+// =============================================================================
+// Diagnosis Tab Types and Components
+// =============================================================================
+
+interface QuickScanItem {
+  id: string;
+  status: 'success' | 'warning';
+  title: string;
+  subtitle: string;
+}
+
+interface DatasetIssue {
+  id: string;
+  title: string;
+  columnName: string;
+  discoveredAt: string;
+  example: string;
+  description: string;
+  isNew?: boolean;
+  status: 'pending' | 'dismissed' | 'acknowledged';
+  dismissedReason?: string;
+  userNote?: string;
+}
+
+// Mock data for Quick Scan
+const mockQuickScanItems: QuickScanItem[] = [
+  {
+    id: '1',
+    status: 'success',
+    title: '결측치 2.4%',
+    subtitle: '양호',
+  },
+  {
+    id: '2',
+    status: 'success',
+    title: '컬럼 타입',
+    subtitle: '8개 중 7개 정상',
+  },
+  {
+    id: '3',
+    status: 'warning',
+    title: 'date 컬럼',
+    subtitle: 'string으로 저장됨',
+  },
+];
+
+// Mock data for Issues
+const initialMockIssues: DatasetIssue[] = [
+  {
+    id: '1',
+    title: '날짜 형식이 섞여 있어요',
+    columnName: 'date',
+    discoveredAt: '2025.01.25',
+    example: '"2025-01-22", "01/23/2025"',
+    description: 'YYYY-MM-DD와 MM/DD/YYYY 형식이 섞여 있어요.',
+    status: 'dismissed',
+    dismissedReason: '문제 아님',
+  },
+  {
+    id: '2',
+    title: '금액 표기가 섞여 있어요',
+    columnName: 'spend',
+    discoveredAt: '2025.01.25',
+    example: '"125000", "₩125,000"',
+    description: '숫자만 있는 것과 통화 기호가 포함된 것이 섞여 있어요.',
+    status: 'acknowledged',
+    userNote: '"미국 지사 데이터라 원래 이래요"',
+  },
+  {
+    id: '3',
+    title: '전화번호 형식이 섞여 있어요',
+    columnName: 'phone',
+    discoveredAt: '2025.01.26',
+    example: '"010-1234-5678", "01012345678"',
+    description: '하이픈이 있는 것과 없는 것이 섞여 있어요.',
+    isNew: true,
+    status: 'pending',
+  },
+  {
+    id: '4',
+    title: '결측치에 패턴이 있어요',
+    columnName: 'revenue',
+    discoveredAt: '2025.01.26',
+    example: 'conversions=0 일 때 revenue=null',
+    description: '전환이 없을 때 매출이 비어있어요. 의도된 건지 확인이 필요해요.',
+    isNew: true,
+    status: 'pending',
+  },
+];
+
+function QuickScanSection() {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Quick Scan
+        </h3>
+        <button
+          type="button"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg hover:bg-muted/50 transition-colors"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Rescan
+        </button>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        업로드 시 자동으로 검사한 결과예요.
+      </p>
+
+      <div>
+        {mockQuickScanItems.map((item, index) => {
+          const isSuccess = item.status === 'success';
+          const isLast = index === mockQuickScanItems.length - 1;
+
+          return (
+            <div
+              key={item.id}
+              className={cn(
+                'flex items-center gap-3 py-3',
+                !isLast && 'border-b border-[#f0efed]'
+              )}
+            >
+              {/* Icon with circular background */}
+              <div
+                className={cn(
+                  'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px]',
+                  isSuccess
+                    ? 'bg-[#f0fdf4] text-[#16a34a]'
+                    : 'bg-[#fefce8] text-[#d97706]'
+                )}
+              >
+                {isSuccess ? (
+                  <Check className="h-3 w-3" strokeWidth={3} />
+                ) : (
+                  <span className="font-semibold">!</span>
+                )}
+              </div>
+              {/* Label */}
+              <span className="text-sm font-medium text-[#1c1917]">{item.title}</span>
+              {/* Detail */}
+              <span className="text-[13px] text-[#a8a29e] ml-1">{item.subtitle}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function IssueCard({
+  issue,
+  onRespond,
+  onReset,
+}: {
+  issue: DatasetIssue;
+  onRespond: (id: string, response: string, note?: string) => void;
+  onReset: (id: string) => void;
+}) {
+  const [showInput, setShowInput] = useState(false);
+  const [userInput, setUserInput] = useState('');
+
+  const handleCustomInput = () => {
+    if (userInput.trim()) {
+      onRespond(issue.id, 'custom', userInput.trim());
+      setShowInput(false);
+      setUserInput('');
+    }
+  };
+
+  const getStatusText = () => {
+    if (issue.status === 'dismissed') {
+      return issue.dismissedReason || '문제 아님';
+    }
+    if (issue.status === 'acknowledged') {
+      if (issue.userNote) {
+        return issue.userNote;
+      }
+      return '문제 맞음';
+    }
+    return '';
+  };
+
+  const getStatusColor = () => {
+    if (issue.status === 'acknowledged') {
+      if (issue.userNote === '확인 필요') {
+        return 'text-[#d97706]'; // warning color
+      }
+      return 'text-red-500'; // "문제 맞음" - red color
+    }
+    return 'text-muted-foreground';
+  };
+
+  return (
+    <div className="rounded-xl bg-muted/50 p-5 space-y-4">
+      {/* Header */}
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-0.5 text-xs bg-background border border-border rounded-md font-medium text-muted-foreground">{issue.columnName}</span>
+          <h4 className="text-base font-medium">{issue.title}</h4>
+          {issue.isNew && (
+            <span className="text-[10px] font-semibold text-red-500">NEW</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>{issue.discoveredAt} 발견</span>
+        </div>
+      </div>
+
+      {/* Description */}
+      <p className="text-sm text-muted-foreground">{issue.description}</p>
+
+      {/* Example */}
+      <div className="rounded-lg bg-background px-4 py-3">
+        <code className="text-sm text-muted-foreground">예: {issue.example}</code>
+      </div>
+
+      {/* Actions or Status */}
+      {issue.status === 'pending' && !showInput && (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => onRespond(issue.id, 'correct')}
+            className="px-4 py-2 text-sm bg-background border border-border rounded-lg hover:bg-muted/50 transition-colors"
+          >
+            맞아요
+          </button>
+          <button
+            type="button"
+            onClick={() => onRespond(issue.id, 'incorrect')}
+            className="px-4 py-2 text-sm bg-background border border-border rounded-lg hover:bg-muted/50 transition-colors"
+          >
+            아니에요
+          </button>
+          <button
+            type="button"
+            onClick={() => onRespond(issue.id, 'unknown')}
+            className="px-4 py-2 text-sm bg-background border border-border rounded-lg hover:bg-muted/50 transition-colors"
+          >
+            잘 모르겠어요
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowInput(true)}
+            className="px-4 py-2 text-sm bg-background border border-border rounded-lg hover:bg-muted/50 transition-colors"
+          >
+            직접 입력
+          </button>
+        </div>
+      )}
+
+      {/* Custom Input Mode */}
+      {issue.status === 'pending' && showInput && (
+        <div className="space-y-3 pt-1">
+          <textarea
+            value={userInput}
+            onChange={(e) => setUserInput(e.target.value)}
+            placeholder="이 데이터에 대해 알려주세요..."
+            className="w-full min-h-[80px] rounded-lg border border-border bg-background p-3 text-sm resize-none placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowInput(false);
+                setUserInput('');
+              }}
+              className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              취소
+            </button>
+            <button
+              type="button"
+              onClick={handleCustomInput}
+              className="px-4 py-2 text-sm bg-foreground text-background rounded-lg hover:bg-foreground/90 transition-colors"
+            >
+              확인
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Resolved Status */}
+      {issue.status !== 'pending' && (
+        <div className="flex items-center justify-between pt-1">
+          <span className={cn('text-sm', getStatusColor())}>
+            {getStatusText()}
+          </span>
+          <button
+            type="button"
+            onClick={() => onReset(issue.id)}
+            className="text-sm text-muted-foreground hover:text-foreground underline-offset-2 hover:underline transition-colors"
+          >
+            다시 확인하기
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IssuesSection({
+  issues,
+  onRespond,
+  onReset,
+}: {
+  issues: DatasetIssue[];
+  onRespond: (id: string, response: string, note?: string) => void;
+  onReset: (id: string) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Issues
+        </h3>
+        <button
+          type="button"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg hover:bg-muted/50 transition-colors"
+        >
+          <Search className="h-4 w-4" />
+          Find Issues
+        </button>
+      </div>
+
+      <div className="space-y-4">
+        {issues.map((issue) => (
+          <IssueCard
+            key={issue.id}
+            issue={issue}
+            onRespond={onRespond}
+            onReset={onReset}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// Confirmed Issues Section
+// =============================================================================
+
+type IssueResponseType = 'yes' | 'no' | 'custom' | 'unsure';
+
+interface IssueResponseInfo {
+  type: IssueResponseType;
+  text: string;
+  color: string;
+}
+
+function getIssueResponseInfo(issue: DatasetIssue): IssueResponseInfo | null {
+  if (issue.status === 'pending') {
+    return null;
+  }
+
+  if (issue.status === 'dismissed') {
+    return {
+      type: 'no',
+      text: '문제 아님',
+      color: 'text-[#a8a29e]',
+    };
+  }
+
+  // status === 'acknowledged'
+  if (!issue.userNote) {
+    return {
+      type: 'yes',
+      text: '문제 맞음',
+      color: 'text-red-500',
+    };
+  }
+
+  if (issue.userNote === '확인 필요') {
+    return {
+      type: 'unsure',
+      text: '확인 필요',
+      color: 'text-[#d97706]',
+    };
+  }
+
+  // Custom user note
+  const displayText = issue.userNote.length > 25
+    ? `${issue.userNote.slice(0, 25)}...`
+    : issue.userNote;
+
+  return {
+    type: 'custom',
+    text: displayText,
+    color: 'text-[#a8a29e]',
+  };
+}
+
+function ConfirmedIssuesSection({ issues }: { issues: DatasetIssue[] }) {
+  const confirmedIssues = issues.filter((issue) => issue.status !== 'pending');
+
+  if (confirmedIssues.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-4">
+      <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        Confirmed Issues
+      </h3>
+
+      <div className="rounded-xl bg-muted/50 p-4">
+        {confirmedIssues.map((issue, index) => {
+          const responseInfo = getIssueResponseInfo(issue);
+          const isLast = index === confirmedIssues.length - 1;
+
+          return (
+            <div
+              key={issue.id}
+              className={cn(
+                'flex items-center gap-2.5 py-2',
+                !isLast && 'border-b border-[#f0efed]'
+              )}
+            >
+              <Check
+                size={14}
+                className="shrink-0 text-[#292524]"
+                strokeWidth={2.5}
+              />
+              <span className="flex-1 text-[13px] text-[#57534e]">
+                {issue.title}
+              </span>
+              {responseInfo && (
+                <span className={cn('text-xs', responseInfo.color)}>
+                  {responseInfo.text}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex justify-end">
+        <button
+          type="button"
+          className="flex items-center gap-2 rounded-lg bg-[#292524] px-4 py-2.5 text-sm text-white hover:bg-[#1c1917] transition-colors"
+        >
+          <MessageSquare size={14} />
+          <span>에이전트와 함께 정리하기</span>
+          <ArrowRight size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DiagnosisTabContent() {
+  const [issues, setIssues] = useState<DatasetIssue[]>(initialMockIssues);
+
+  const handleRespond = (id: string, response: string, note?: string) => {
+    setIssues((prev) =>
+      prev.map((issue) => {
+        if (issue.id !== id) return issue;
+
+        if (response === 'correct') {
+          return { ...issue, status: 'acknowledged' as const, isNew: false };
+        }
+        if (response === 'incorrect') {
+          return { ...issue, status: 'dismissed' as const, dismissedReason: '문제 아님', isNew: false };
+        }
+        if (response === 'unknown') {
+          return { ...issue, status: 'acknowledged' as const, userNote: '확인 필요', isNew: false };
+        }
+        if (response === 'custom' && note) {
+          return { ...issue, status: 'acknowledged' as const, userNote: `"${note}"`, isNew: false };
+        }
+        return issue;
+      })
+    );
+  };
+
+  const handleReset = (id: string) => {
+    setIssues((prev) =>
+      prev.map((issue) => {
+        if (issue.id !== id) return issue;
+        return {
+          ...issue,
+          status: 'pending' as const,
+          dismissedReason: undefined,
+          userNote: undefined,
+        };
+      })
+    );
+  };
+
+  return (
+    <div className="space-y-12">
+      {/* Quick Scan Section */}
+      <QuickScanSection />
+
+      {/* Divider */}
+      <div className="border-t border-border/50" />
+
+      {/* Issues Section */}
+      <IssuesSection
+        issues={issues}
+        onRespond={handleRespond}
+        onReset={handleReset}
+      />
+
+      {/* Divider */}
+      <div className="border-t border-border/50" />
+
+      {/* Confirmed Issues Section */}
+      <ConfirmedIssuesSection issues={issues} />
+    </div>
+  );
+}
+
 interface TableTabContentProps {
   preview: FilePreview | CachedTablePreview | null;
   loading: boolean;
@@ -520,22 +1031,3 @@ function TableTabContent({ preview, loading, error }: TableTabContentProps) {
   );
 }
 
-interface PlaceholderTabContentProps {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-}
-
-function PlaceholderTabContent({ icon, title, description }: PlaceholderTabContentProps) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-4">
-      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-        {icon}
-      </div>
-      <div className="text-center">
-        <h3 className="text-lg font-medium">{title}</h3>
-        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-      </div>
-    </div>
-  );
-}
