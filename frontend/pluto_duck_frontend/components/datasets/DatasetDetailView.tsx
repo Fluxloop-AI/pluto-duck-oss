@@ -164,9 +164,6 @@ export function DatasetDetailView({
           {/* Shared Header */}
           <DatasetHeader dataset={dataset} />
 
-          {/* Divider */}
-          <div className="border-t border-border/50" />
-
           {/* Tab Content */}
           {activeTab === 'table' && (
             <TableTabContent
