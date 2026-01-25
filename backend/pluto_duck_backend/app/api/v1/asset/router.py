@@ -1008,6 +1008,71 @@ class TypeSuggestionResponse(BaseModel):
     sample_values: List[str] = []
 
 
+class EncodingInfoResponse(BaseModel):
+    """Response for detected file encoding."""
+
+    detected: str
+    confidence: float
+
+
+class ParsingIntegrityResponse(BaseModel):
+    """Response for parsing integrity check."""
+
+    total_lines: int
+    parsed_rows: int
+    malformed_rows: int
+    has_errors: bool
+    error_message: Optional[str] = None
+
+
+class NumericStatsResponse(BaseModel):
+    """Response for numeric column statistics."""
+
+    min: Optional[float] = None
+    max: Optional[float] = None
+    median: Optional[float] = None
+    mean: Optional[float] = None
+    stddev: Optional[float] = None
+    distinct_count: int = 0
+
+
+class ValueFrequencyResponse(BaseModel):
+    """Response for value frequency."""
+
+    value: str
+    frequency: int
+
+
+class CategoricalStatsResponse(BaseModel):
+    """Response for categorical column statistics."""
+
+    unique_count: int
+    top_values: List[ValueFrequencyResponse] = []
+    avg_length: float = 0
+
+
+class DateStatsResponse(BaseModel):
+    """Response for date column statistics."""
+
+    min_date: Optional[str] = None
+    max_date: Optional[str] = None
+    span_days: Optional[int] = None
+    distinct_days: int = 0
+
+
+class ColumnStatisticsResponse(BaseModel):
+    """Response for column statistics."""
+
+    column_name: str
+    column_type: str
+    semantic_type: str
+    null_count: int
+    null_percentage: float
+    numeric_stats: Optional[NumericStatsResponse] = None
+    categorical_stats: Optional[CategoricalStatsResponse] = None
+    date_stats: Optional[DateStatsResponse] = None
+
+
 class FileDiagnosisResponse(BaseModel):
     """Response for a single file diagnosis."""
 
@@ -1019,6 +1084,11 @@ class FileDiagnosisResponse(BaseModel):
     file_size_bytes: int
     type_suggestions: List[TypeSuggestionResponse] = []
     diagnosed_at: Optional[datetime] = None
+    # Extended diagnosis fields
+    encoding: Optional[EncodingInfoResponse] = None
+    parsing_integrity: Optional[ParsingIntegrityResponse] = None
+    column_statistics: List[ColumnStatisticsResponse] = []
+    sample_rows: List[List[Any]] = []
 
 
 class DiagnoseFilesResponse(BaseModel):
@@ -1092,6 +1162,54 @@ def diagnose_files(
                         for ts in diagnosis.type_suggestions
                     ],
                     diagnosed_at=diagnosis.diagnosed_at,
+                    # Extended diagnosis fields
+                    encoding=EncodingInfoResponse(
+                        detected=diagnosis.encoding.detected,
+                        confidence=diagnosis.encoding.confidence,
+                    ) if diagnosis.encoding else None,
+                    parsing_integrity=ParsingIntegrityResponse(
+                        total_lines=diagnosis.parsing_integrity.total_lines,
+                        parsed_rows=diagnosis.parsing_integrity.parsed_rows,
+                        malformed_rows=diagnosis.parsing_integrity.malformed_rows,
+                        has_errors=diagnosis.parsing_integrity.has_errors,
+                        error_message=diagnosis.parsing_integrity.error_message,
+                    ) if diagnosis.parsing_integrity else None,
+                    column_statistics=[
+                        ColumnStatisticsResponse(
+                            column_name=cs.column_name,
+                            column_type=cs.column_type,
+                            semantic_type=cs.semantic_type,
+                            null_count=cs.null_count,
+                            null_percentage=cs.null_percentage,
+                            numeric_stats=NumericStatsResponse(
+                                min=cs.numeric_stats.min,
+                                max=cs.numeric_stats.max,
+                                median=cs.numeric_stats.median,
+                                mean=cs.numeric_stats.mean,
+                                stddev=cs.numeric_stats.stddev,
+                                distinct_count=cs.numeric_stats.distinct_count,
+                            ) if cs.numeric_stats else None,
+                            categorical_stats=CategoricalStatsResponse(
+                                unique_count=cs.categorical_stats.unique_count,
+                                top_values=[
+                                    ValueFrequencyResponse(
+                                        value=vf.value,
+                                        frequency=vf.frequency,
+                                    )
+                                    for vf in cs.categorical_stats.top_values
+                                ],
+                                avg_length=cs.categorical_stats.avg_length,
+                            ) if cs.categorical_stats else None,
+                            date_stats=DateStatsResponse(
+                                min_date=cs.date_stats.min_date,
+                                max_date=cs.date_stats.max_date,
+                                span_days=cs.date_stats.span_days,
+                                distinct_days=cs.date_stats.distinct_days,
+                            ) if cs.date_stats else None,
+                        )
+                        for cs in diagnosis.column_statistics
+                    ],
+                    sample_rows=diagnosis.sample_rows,
                 )
             )
         except DiagnosisError as e:
