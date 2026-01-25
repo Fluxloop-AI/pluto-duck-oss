@@ -94,7 +94,7 @@ export function DatasetDetailView({
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto py-6 px-8">
         {activeTab === 'table' && (
           <TableTabContent
             preview={preview}
