@@ -243,7 +243,7 @@ export function AssetTableView({
       )}
 
       {/* Table */}
-      <div className="rounded-lg border border-border overflow-hidden">
+      <div className="border-y border-border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
