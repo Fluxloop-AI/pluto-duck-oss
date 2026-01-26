@@ -82,6 +82,58 @@ export interface TypeSuggestion {
   sample_values?: string[];
 }
 
+// Extended diagnosis types (for loading screen)
+export interface EncodingInfo {
+  detected: string;
+  confidence: number;
+}
+
+export interface ParsingIntegrity {
+  total_lines: number;
+  parsed_rows: number;
+  malformed_rows: number;
+  has_errors: boolean;
+  error_message?: string;
+}
+
+export interface NumericStats {
+  min: number;
+  max: number;
+  median: number;
+  mean: number;
+  stddev: number;
+  distinct_count: number;
+}
+
+export interface ValueFrequency {
+  value: string;
+  frequency: number;
+}
+
+export interface CategoricalStats {
+  unique_count: number;
+  top_values: ValueFrequency[];
+  avg_length: number;
+}
+
+export interface DateStats {
+  min_date: string;
+  max_date: string;
+  span_days: number;
+  distinct_days: number;
+}
+
+export interface ColumnStatistics {
+  column_name: string;
+  column_type: string;
+  semantic_type?: string;
+  null_count: number;
+  null_percentage: number;
+  numeric_stats?: NumericStats;
+  categorical_stats?: CategoricalStats;
+  date_stats?: DateStats;
+}
+
 export interface FileDiagnosis {
   file_path: string;
   file_type: string;
@@ -91,6 +143,11 @@ export interface FileDiagnosis {
   file_size_bytes: number;
   type_suggestions: TypeSuggestion[];
   diagnosed_at: string;
+  // Extended fields (optional - for loading screen)
+  encoding?: EncodingInfo;
+  parsing_integrity?: ParsingIntegrity;
+  column_statistics?: ColumnStatistics[];
+  sample_rows?: any[][];
 }
 
 export interface DiagnoseFilesRequest {

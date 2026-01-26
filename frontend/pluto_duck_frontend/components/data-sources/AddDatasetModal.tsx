@@ -10,6 +10,7 @@ import { Button } from '../ui/button';
 import { isTauriRuntime } from '../../lib/tauriRuntime';
 import { importFile, diagnoseFiles, type FileType, type FileDiagnosis, type DiagnoseFileRequest } from '../../lib/fileAssetApi';
 import { DiagnosisResultView } from './DiagnosisResultView';
+import { DatasetAnalyzingView } from './DatasetAnalyzingView';
 
 interface SelectedFile {
   id: string;
@@ -99,7 +100,7 @@ interface AddDatasetModalProps {
   onOpenPostgresModal?: () => void;
 }
 
-type Step = 'select' | 'preview' | 'diagnose';
+type Step = 'select' | 'preview' | 'analyzing' | 'diagnose';
 
 // ============================================================================
 // SelectSourceView - Initial view with dropzone and options
@@ -558,7 +559,7 @@ export function AddDatasetModal({
       const schemasIdentical = areSchemasIdentical(response.diagnoses);
       setSchemasMatch(schemasIdentical);
       setMergeFiles(false); // Reset merge checkbox when re-scanning
-      setStep('diagnose');
+      setStep('analyzing');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to diagnose files';
       setDiagnosisError(message);
@@ -735,6 +736,11 @@ export function AddDatasetModal({
     setDiagnosisError(null);
   }, []);
 
+  // Transition from analyzing step to diagnose step
+  const handleAnalyzingComplete = useCallback(() => {
+    setStep('diagnose');
+  }, []);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="p-0 gap-0 sm:max-w-[600px] h-[580px] rounded-3xl overflow-hidden">
@@ -770,6 +776,13 @@ export function AddDatasetModal({
             onClose={handleCancel}
             isDiagnosing={isDiagnosing}
             diagnosisError={diagnosisError}
+          />
+        )}
+        {step === 'analyzing' && diagnosisResults && (
+          <DatasetAnalyzingView
+            diagnosisResults={diagnosisResults}
+            selectedFiles={selectedFiles}
+            onComplete={handleAnalyzingComplete}
           />
         )}
         {step === 'diagnose' && diagnosisResults && (
