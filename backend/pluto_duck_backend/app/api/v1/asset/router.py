@@ -1073,6 +1073,31 @@ class ColumnStatisticsResponse(BaseModel):
     date_stats: Optional[DateStatsResponse] = None
 
 
+class PotentialItemResponse(BaseModel):
+    """Response for a potential analysis question."""
+
+    question: str
+    analysis: str
+
+
+class IssueItemResponse(BaseModel):
+    """Response for a data quality issue."""
+
+    issue: str
+    suggestion: str
+
+
+class LLMAnalysisResponse(BaseModel):
+    """Response for LLM-generated dataset analysis."""
+
+    suggested_name: str
+    context: str
+    potential: List[PotentialItemResponse] = []
+    issues: List[IssueItemResponse] = []
+    analyzed_at: Optional[datetime] = None
+    model_used: str
+
+
 class FileDiagnosisResponse(BaseModel):
     """Response for a single file diagnosis."""
 
@@ -1089,6 +1114,8 @@ class FileDiagnosisResponse(BaseModel):
     parsing_integrity: Optional[ParsingIntegrityResponse] = None
     column_statistics: List[ColumnStatisticsResponse] = []
     sample_rows: List[List[Any]] = []
+    # LLM analysis result
+    llm_analysis: Optional[LLMAnalysisResponse] = None
 
 
 class DiagnoseFilesResponse(BaseModel):
@@ -1103,7 +1130,7 @@ class DiagnoseFilesResponse(BaseModel):
 
 
 @router.post("/files/diagnose", response_model=DiagnoseFilesResponse)
-def diagnose_files(
+async def diagnose_files(
     request: DiagnoseFilesRequest,
     project_id: Optional[str] = Query(None),
 ) -> DiagnoseFilesResponse:
@@ -1114,109 +1141,130 @@ def diagnose_files(
     - Missing value counts per column
     - Row count and file size
     - Type suggestions (optional, for detecting mismatched types)
+    - LLM-generated analysis (context, potential analyses, issues)
 
     Use this to preview data quality before creating tables.
 
     Set use_cache=false to force fresh diagnosis even if cached results exist.
     """
+    from pluto_duck_backend.app.services.asset.file_diagnosis_service import DiagnoseFileRequest
+
     service = get_file_diagnosis_service(project_id)
 
+    # Convert request to DiagnoseFileRequest objects
+    file_requests = [
+        DiagnoseFileRequest(file_path=f.file_path, file_type=f.file_type)
+        for f in request.files
+    ]
+
+    # Run diagnosis with LLM analysis
+    try:
+        all_diagnoses = await service.diagnose_files_with_llm(
+            files=file_requests,
+            use_cache=request.use_cache,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Diagnosis failed: {e}")
+
+    # Build response objects
     diagnoses = []
-    for file_req in request.files:
-        try:
-            diagnosis = None
-
-            # Try to get cached diagnosis if caching is enabled
-            if request.use_cache:
-                diagnosis = service.get_cached_diagnosis(file_req.file_path)
-
-            # If no cached result, perform fresh diagnosis
-            if diagnosis is None:
-                diagnosis = service.diagnose_file(file_req.file_path, file_req.file_type)
-                # Save to cache for future requests
-                service.save_diagnosis(diagnosis)
-
-            diagnoses.append(
-                FileDiagnosisResponse(
-                    file_path=diagnosis.file_path,
-                    file_type=diagnosis.file_type,
-                    columns=[
-                        ColumnSchemaResponse(
-                            name=col.name,
-                            type=col.type,
-                            nullable=col.nullable,
+    for diagnosis in all_diagnoses:
+        diagnoses.append(
+            FileDiagnosisResponse(
+                file_path=diagnosis.file_path,
+                file_type=diagnosis.file_type,
+                columns=[
+                    ColumnSchemaResponse(
+                        name=col.name,
+                        type=col.type,
+                        nullable=col.nullable,
+                    )
+                    for col in diagnosis.schema
+                ],
+                missing_values=diagnosis.missing_values,
+                row_count=diagnosis.row_count,
+                file_size_bytes=diagnosis.file_size_bytes,
+                type_suggestions=[
+                    TypeSuggestionResponse(
+                        column_name=ts.column_name,
+                        current_type=ts.current_type,
+                        suggested_type=ts.suggested_type,
+                        confidence=ts.confidence,
+                        sample_values=ts.sample_values,
+                    )
+                    for ts in diagnosis.type_suggestions
+                ],
+                diagnosed_at=diagnosis.diagnosed_at,
+                # Extended diagnosis fields
+                encoding=EncodingInfoResponse(
+                    detected=diagnosis.encoding.detected,
+                    confidence=diagnosis.encoding.confidence,
+                ) if diagnosis.encoding else None,
+                parsing_integrity=ParsingIntegrityResponse(
+                    total_lines=diagnosis.parsing_integrity.total_lines,
+                    parsed_rows=diagnosis.parsing_integrity.parsed_rows,
+                    malformed_rows=diagnosis.parsing_integrity.malformed_rows,
+                    has_errors=diagnosis.parsing_integrity.has_errors,
+                    error_message=diagnosis.parsing_integrity.error_message,
+                ) if diagnosis.parsing_integrity else None,
+                column_statistics=[
+                    ColumnStatisticsResponse(
+                        column_name=cs.column_name,
+                        column_type=cs.column_type,
+                        semantic_type=cs.semantic_type,
+                        null_count=cs.null_count,
+                        null_percentage=cs.null_percentage,
+                        numeric_stats=NumericStatsResponse(
+                            min=cs.numeric_stats.min,
+                            max=cs.numeric_stats.max,
+                            median=cs.numeric_stats.median,
+                            mean=cs.numeric_stats.mean,
+                            stddev=cs.numeric_stats.stddev,
+                            distinct_count=cs.numeric_stats.distinct_count,
+                        ) if cs.numeric_stats else None,
+                        categorical_stats=CategoricalStatsResponse(
+                            unique_count=cs.categorical_stats.unique_count,
+                            top_values=[
+                                ValueFrequencyResponse(
+                                    value=vf.value,
+                                    frequency=vf.frequency,
+                                )
+                                for vf in cs.categorical_stats.top_values
+                            ],
+                            avg_length=cs.categorical_stats.avg_length,
+                        ) if cs.categorical_stats else None,
+                        date_stats=DateStatsResponse(
+                            min_date=cs.date_stats.min_date,
+                            max_date=cs.date_stats.max_date,
+                            span_days=cs.date_stats.span_days,
+                            distinct_days=cs.date_stats.distinct_days,
+                        ) if cs.date_stats else None,
+                    )
+                    for cs in diagnosis.column_statistics
+                ],
+                sample_rows=diagnosis.sample_rows,
+                llm_analysis=LLMAnalysisResponse(
+                    suggested_name=diagnosis.llm_analysis.suggested_name,
+                    context=diagnosis.llm_analysis.context,
+                    potential=[
+                        PotentialItemResponse(
+                            question=p.question,
+                            analysis=p.analysis,
                         )
-                        for col in diagnosis.schema
+                        for p in diagnosis.llm_analysis.potential
                     ],
-                    missing_values=diagnosis.missing_values,
-                    row_count=diagnosis.row_count,
-                    file_size_bytes=diagnosis.file_size_bytes,
-                    type_suggestions=[
-                        TypeSuggestionResponse(
-                            column_name=ts.column_name,
-                            current_type=ts.current_type,
-                            suggested_type=ts.suggested_type,
-                            confidence=ts.confidence,
-                            sample_values=ts.sample_values,
+                    issues=[
+                        IssueItemResponse(
+                            issue=i.issue,
+                            suggestion=i.suggestion,
                         )
-                        for ts in diagnosis.type_suggestions
+                        for i in diagnosis.llm_analysis.issues
                     ],
-                    diagnosed_at=diagnosis.diagnosed_at,
-                    # Extended diagnosis fields
-                    encoding=EncodingInfoResponse(
-                        detected=diagnosis.encoding.detected,
-                        confidence=diagnosis.encoding.confidence,
-                    ) if diagnosis.encoding else None,
-                    parsing_integrity=ParsingIntegrityResponse(
-                        total_lines=diagnosis.parsing_integrity.total_lines,
-                        parsed_rows=diagnosis.parsing_integrity.parsed_rows,
-                        malformed_rows=diagnosis.parsing_integrity.malformed_rows,
-                        has_errors=diagnosis.parsing_integrity.has_errors,
-                        error_message=diagnosis.parsing_integrity.error_message,
-                    ) if diagnosis.parsing_integrity else None,
-                    column_statistics=[
-                        ColumnStatisticsResponse(
-                            column_name=cs.column_name,
-                            column_type=cs.column_type,
-                            semantic_type=cs.semantic_type,
-                            null_count=cs.null_count,
-                            null_percentage=cs.null_percentage,
-                            numeric_stats=NumericStatsResponse(
-                                min=cs.numeric_stats.min,
-                                max=cs.numeric_stats.max,
-                                median=cs.numeric_stats.median,
-                                mean=cs.numeric_stats.mean,
-                                stddev=cs.numeric_stats.stddev,
-                                distinct_count=cs.numeric_stats.distinct_count,
-                            ) if cs.numeric_stats else None,
-                            categorical_stats=CategoricalStatsResponse(
-                                unique_count=cs.categorical_stats.unique_count,
-                                top_values=[
-                                    ValueFrequencyResponse(
-                                        value=vf.value,
-                                        frequency=vf.frequency,
-                                    )
-                                    for vf in cs.categorical_stats.top_values
-                                ],
-                                avg_length=cs.categorical_stats.avg_length,
-                            ) if cs.categorical_stats else None,
-                            date_stats=DateStatsResponse(
-                                min_date=cs.date_stats.min_date,
-                                max_date=cs.date_stats.max_date,
-                                span_days=cs.date_stats.span_days,
-                                distinct_days=cs.date_stats.distinct_days,
-                            ) if cs.date_stats else None,
-                        )
-                        for cs in diagnosis.column_statistics
-                    ],
-                    sample_rows=diagnosis.sample_rows,
-                )
+                    analyzed_at=diagnosis.llm_analysis.analyzed_at,
+                    model_used=diagnosis.llm_analysis.model_used,
+                ) if diagnosis.llm_analysis else None,
             )
-        except DiagnosisError as e:
-            # Check if it's a file not found error
-            if "not found" in str(e).lower():
-                raise HTTPException(status_code=404, detail=str(e))
-            raise HTTPException(status_code=400, detail=str(e))
+        )
 
     return DiagnoseFilesResponse(diagnoses=diagnoses)
 

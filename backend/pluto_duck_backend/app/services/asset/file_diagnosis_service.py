@@ -276,6 +276,78 @@ class ColumnStatistics:
 
 
 @dataclass
+class PotentialItem:
+    """A potential analysis question and answer pair.
+
+    Attributes:
+        question: Analysis question that can be answered with this data
+        analysis: Brief description of how to perform the analysis
+    """
+
+    question: str
+    analysis: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "question": self.question,
+            "analysis": self.analysis,
+        }
+
+
+@dataclass
+class IssueItem:
+    """A data quality issue and suggested fix.
+
+    Attributes:
+        issue: Description of the data quality issue
+        suggestion: Suggested fix or improvement
+    """
+
+    issue: str
+    suggestion: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "issue": self.issue,
+            "suggestion": self.suggestion,
+        }
+
+
+@dataclass
+class LLMAnalysisResult:
+    """LLM-generated analysis of a dataset.
+
+    Attributes:
+        suggested_name: Suggested dataset name
+        context: Context description (2-3 sentences)
+        potential: List of potential analysis questions (3-5 items)
+        issues: List of data quality issues (0 or more items)
+        analyzed_at: Timestamp of analysis
+        model_used: LLM model identifier used for analysis
+    """
+
+    suggested_name: str
+    context: str
+    potential: List[PotentialItem]
+    issues: List[IssueItem]
+    analyzed_at: datetime
+    model_used: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "suggested_name": self.suggested_name,
+            "context": self.context,
+            "potential": [p.to_dict() for p in self.potential],
+            "issues": [i.to_dict() for i in self.issues],
+            "analyzed_at": self.analyzed_at.isoformat() if self.analyzed_at else None,
+            "model_used": self.model_used,
+        }
+
+
+@dataclass
 class FileDiagnosis:
     """Result of file diagnosis.
 
@@ -292,6 +364,7 @@ class FileDiagnosis:
         parsing_integrity: Parsing integrity check result (CSV only)
         column_statistics: Per-column statistics
         sample_rows: Sample data rows (up to 5)
+        llm_analysis: LLM-generated analysis result (optional)
     """
 
     file_path: str
@@ -307,6 +380,8 @@ class FileDiagnosis:
     parsing_integrity: Optional[ParsingIntegrity] = None
     column_statistics: List[ColumnStatistics] = field(default_factory=list)
     sample_rows: List[List[Any]] = field(default_factory=list)
+    # LLM analysis result
+    llm_analysis: Optional[LLMAnalysisResult] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -323,6 +398,7 @@ class FileDiagnosis:
             "parsing_integrity": self.parsing_integrity.to_dict() if self.parsing_integrity else None,
             "column_statistics": [cs.to_dict() for cs in self.column_statistics],
             "sample_rows": self.sample_rows,
+            "llm_analysis": self.llm_analysis.to_dict() if self.llm_analysis else None,
         }
 
 
@@ -412,9 +488,19 @@ class FileDiagnosisService:
                     row_count BIGINT,
                     column_count INTEGER,
                     file_size_bytes BIGINT,
-                    diagnosed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    diagnosed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    llm_analysis TEXT
                 )
             """)
+            # Add llm_analysis column if it doesn't exist (for existing tables)
+            try:
+                conn.execute(f"""
+                    ALTER TABLE {self.METADATA_SCHEMA}.{self.METADATA_TABLE}
+                    ADD COLUMN IF NOT EXISTS llm_analysis TEXT
+                """)
+            except Exception:
+                # Column might already exist or ALTER not supported
+                pass
 
     @contextmanager
     def _get_connection(self):
@@ -1261,6 +1347,72 @@ class FileDiagnosisService:
             diagnoses.append(diagnosis)
         return diagnoses
 
+    async def diagnose_files_with_llm(
+        self,
+        files: List[DiagnoseFileRequest],
+        use_cache: bool = True,
+    ) -> List[FileDiagnosis]:
+        """Diagnose multiple files with LLM analysis.
+
+        This async method:
+        1. Performs technical diagnosis for each file (cache-aware)
+        2. Runs LLM analysis on files that needed fresh diagnosis
+        3. Merges LLM results and updates cache
+
+        Args:
+            files: List of files to diagnose
+            use_cache: Whether to use cached results (default True)
+
+        Returns:
+            List of FileDiagnosis with LLM analysis included
+        """
+        from .llm_analysis_service import analyze_datasets_with_llm
+
+        diagnoses: List[FileDiagnosis] = []
+        new_diagnoses: List[FileDiagnosis] = []  # Diagnoses that need LLM analysis
+
+        # Step 1: Technical diagnosis (cache-aware)
+        for file_req in files:
+            diagnosis = None
+
+            # Try cache if enabled
+            if use_cache:
+                diagnosis = self.get_cached_diagnosis(file_req.file_path)
+                # If cached but no LLM analysis, treat as needing analysis
+                if diagnosis and diagnosis.llm_analysis is None:
+                    new_diagnoses.append(diagnosis)
+
+            # Fresh diagnosis if not cached
+            if diagnosis is None:
+                diagnosis = self.diagnose_file(file_req.file_path, file_req.file_type)
+                new_diagnoses.append(diagnosis)
+
+            diagnoses.append(diagnosis)
+
+        # Step 2: Run LLM analysis on new diagnoses
+        if new_diagnoses:
+            logger.info(f"Running LLM analysis on {len(new_diagnoses)} files")
+            try:
+                llm_results = await analyze_datasets_with_llm(new_diagnoses)
+
+                # Merge LLM results into diagnoses
+                for diagnosis in new_diagnoses:
+                    if diagnosis.file_path in llm_results:
+                        diagnosis.llm_analysis = llm_results[diagnosis.file_path]
+                        logger.info(f"LLM analysis added for {diagnosis.file_path}")
+
+                    # Save updated diagnosis to cache
+                    self.save_diagnosis(diagnosis)
+
+            except Exception as e:
+                logger.error(f"LLM analysis failed: {e}")
+                # Still save diagnoses without LLM analysis
+                for diagnosis in new_diagnoses:
+                    if diagnosis.llm_analysis is None:
+                        self.save_diagnosis(diagnosis)
+
+        return diagnoses
+
     # =========================================================================
     # Caching Methods
     # =========================================================================
@@ -1280,6 +1432,7 @@ class FileDiagnosisService:
         schema_json = json.dumps([col.to_dict() for col in diagnosis.schema])
         missing_values_json = json.dumps(diagnosis.missing_values)
         type_suggestions_json = json.dumps([ts.to_dict() for ts in diagnosis.type_suggestions])
+        llm_analysis_json = json.dumps(diagnosis.llm_analysis.to_dict()) if diagnosis.llm_analysis else None
 
         with self._get_connection() as conn:
             # Delete existing diagnosis for this file path
@@ -1292,8 +1445,8 @@ class FileDiagnosisService:
             conn.execute(f"""
                 INSERT INTO {self.METADATA_SCHEMA}.{self.METADATA_TABLE}
                 (id, project_id, file_path, file_type, schema_info, missing_values,
-                 type_suggestions, row_count, column_count, file_size_bytes, diagnosed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 type_suggestions, row_count, column_count, file_size_bytes, diagnosed_at, llm_analysis)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, [
                 diagnosis_id,
                 self.project_id,
@@ -1306,6 +1459,7 @@ class FileDiagnosisService:
                 len(diagnosis.schema),
                 diagnosis.file_size_bytes,
                 diagnosis.diagnosed_at,
+                llm_analysis_json,
             ])
 
         return diagnosis_id
@@ -1322,7 +1476,7 @@ class FileDiagnosisService:
         with self._get_connection() as conn:
             result = conn.execute(f"""
                 SELECT file_path, file_type, schema_info, missing_values,
-                       type_suggestions, row_count, file_size_bytes, diagnosed_at
+                       type_suggestions, row_count, file_size_bytes, diagnosed_at, llm_analysis
                 FROM {self.METADATA_SCHEMA}.{self.METADATA_TABLE}
                 WHERE file_path = ? AND project_id = ?
             """, [file_path, self.project_id]).fetchone()
@@ -1334,6 +1488,7 @@ class FileDiagnosisService:
             schema_data = json.loads(result[2]) if result[2] else []
             missing_values = json.loads(result[3]) if result[3] else {}
             type_suggestions_data = json.loads(result[4]) if result[4] else []
+            llm_analysis_data = json.loads(result[8]) if result[8] else None
 
             # Reconstruct schema
             schema = [
@@ -1357,6 +1512,30 @@ class FileDiagnosisService:
                 for ts in type_suggestions_data
             ]
 
+            # Reconstruct LLM analysis if present
+            llm_analysis: Optional[LLMAnalysisResult] = None
+            if llm_analysis_data:
+                llm_analysis = LLMAnalysisResult(
+                    suggested_name=llm_analysis_data.get("suggested_name", ""),
+                    context=llm_analysis_data.get("context", ""),
+                    potential=[
+                        PotentialItem(
+                            question=p.get("question", ""),
+                            analysis=p.get("analysis", ""),
+                        )
+                        for p in llm_analysis_data.get("potential", [])
+                    ],
+                    issues=[
+                        IssueItem(
+                            issue=i.get("issue", ""),
+                            suggestion=i.get("suggestion", ""),
+                        )
+                        for i in llm_analysis_data.get("issues", [])
+                    ],
+                    analyzed_at=datetime.fromisoformat(llm_analysis_data["analyzed_at"]) if llm_analysis_data.get("analyzed_at") else datetime.now(UTC),
+                    model_used=llm_analysis_data.get("model_used", "unknown"),
+                )
+
             return FileDiagnosis(
                 file_path=result[0],
                 file_type=result[1],
@@ -1366,6 +1545,7 @@ class FileDiagnosisService:
                 file_size_bytes=result[6],
                 type_suggestions=type_suggestions,
                 diagnosed_at=result[7],
+                llm_analysis=llm_analysis,
             )
 
     def delete_cached_diagnosis(self, file_path: str) -> bool:

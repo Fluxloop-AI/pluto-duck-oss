@@ -113,7 +113,7 @@ def get_llm_provider(
         local_id = resolved_model.split(":", 1)[1]
         return LlamaCppLLMProvider(local_id)
 
-    # Get API key: env var > database settings
+    # Get API key: env var > database settings > OPENAI_API_KEY fallback
     api_key = settings.agent.api_key
     if not api_key:
         # Try to load from database
@@ -124,6 +124,10 @@ def get_llm_provider(
             api_key = db_settings.get("llm_api_key")
         except Exception:
             pass  # If DB is not available, continue with None
+    if not api_key:
+        # Fallback to OPENAI_API_KEY (consistent with deep/agent.py)
+        import os
+        api_key = os.getenv("OPENAI_API_KEY")
 
     if settings.agent.mock_mode or not api_key:
         return MockLLMProvider()
