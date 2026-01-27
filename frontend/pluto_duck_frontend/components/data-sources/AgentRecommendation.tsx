@@ -55,17 +55,36 @@ export function AgentRecommendation({
       {/* Checkboxes */}
       <div className="space-y-2">
         {/* Make files into 1 dataset */}
-        <label className="flex items-center gap-2.5 cursor-pointer group">
-          <Check className="w-4 h-4 text-foreground flex-shrink-0" strokeWidth={2.5} />
-          <span className="text-sm font-medium text-foreground">
+        <label className="flex items-center gap-2.5 cursor-pointer" onClick={toggleMerge}>
+          <Check
+            className={`w-4 h-4 flex-shrink-0 ${
+              isMerged ? 'text-gray-800 dark:text-gray-200' : 'text-gray-300 dark:text-gray-600'
+            }`}
+            strokeWidth={2.5}
+          />
+          <span className={`text-sm font-medium ${
+            isMerged ? 'text-gray-800 dark:text-gray-200' : 'text-gray-400 dark:text-gray-500'
+          }`}>
             Make {fileCount} files into 1 dataset (total {formatNumber(totalRows)} rows)
           </span>
         </label>
 
         {/* Remove duplicated rows */}
-        <label className="flex items-center gap-2.5 cursor-pointer group">
-          <Check className="w-4 h-4 text-foreground flex-shrink-0" strokeWidth={2.5} />
-          <span className="text-sm font-medium text-foreground">
+        <label
+          className={`flex items-center gap-2.5 ${
+            isMerged ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
+          }`}
+          onClick={toggleRemoveDuplicates}
+        >
+          <Check
+            className={`w-4 h-4 flex-shrink-0 ${
+              removeDuplicates ? 'text-gray-800 dark:text-gray-200' : 'text-gray-300 dark:text-gray-600'
+            }`}
+            strokeWidth={2.5}
+          />
+          <span className={`text-sm font-medium ${
+            removeDuplicates ? 'text-gray-800 dark:text-gray-200' : 'text-gray-400 dark:text-gray-500'
+          }`}>
             Remove duplicated {formatNumber(duplicateRows)} rows (total estimated {formatNumber(estimatedRows)} rows)
           </span>
         </label>
