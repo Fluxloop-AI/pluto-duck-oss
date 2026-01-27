@@ -1,8 +1,10 @@
 'use client';
 
 import { X, AlertTriangle, ArrowRight, FileText, ChevronDown, ChevronUp } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Button } from '../ui/button';
+import { DatasetCard, type Dataset } from './DatasetCard';
+import { AgentRecommendation } from './AgentRecommendation';
 import type { FileDiagnosis, ColumnSchema, TypeSuggestion, DuplicateCountResponse, MergedAnalysis } from '../../lib/fileAssetApi';
 
 interface SelectedFile {
@@ -16,7 +18,7 @@ interface DiagnosisResultViewProps {
   diagnoses: FileDiagnosis[];
   files: SelectedFile[];
   onBack: () => void;
-  onImport: () => void;
+  onImport: (datasetNames: Record<number, string>) => void;
   onClose: () => void;
   isImporting: boolean;
   schemasMatch: boolean;
@@ -26,13 +28,6 @@ interface DiagnosisResultViewProps {
   onRemoveDuplicatesChange: (checked: boolean) => void;
   duplicateInfo: DuplicateCountResponse | null;
   mergedAnalysis: MergedAnalysis | null;
-}
-
-// Helper to format file size
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // Helper to format number with commas
@@ -45,7 +40,24 @@ function getFileName(filePath: string): string {
   return filePath.split(/[/\\]/).pop() || filePath;
 }
 
-// Single file diagnosis card
+// Helper to generate a valid table name from filename
+function generateTableName(filename: string): string {
+  const nameWithoutExt = filename.replace(/\.(csv|parquet)$/i, '');
+  return nameWithoutExt
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .substring(0, 63);
+}
+
+// Determine dataset status based on diagnosis
+function determineStatus(diagnosis: FileDiagnosis): 'ready' | 'review' {
+  if (!diagnosis.llm_analysis) return 'review';
+  if (diagnosis.llm_analysis.issues.length > 0) return 'review';
+  return 'ready';
+}
+
+// Single file diagnosis card (expandable schema table)
 interface FileDiagnosisCardProps {
   diagnosis: FileDiagnosis;
   isExpanded: boolean;
@@ -77,7 +89,7 @@ function FileDiagnosisCard({ diagnosis, isExpanded, onToggle }: FileDiagnosisCar
           <div className="text-left">
             <p className="font-medium text-foreground">{fileName}</p>
             <p className="text-sm text-muted-foreground">
-              {formatNumber(diagnosis.row_count)} rows, {diagnosis.columns.length} columns, {formatFileSize(diagnosis.file_size_bytes)}
+              {formatNumber(diagnosis.row_count)} rows, {diagnosis.columns.length} columns
             </p>
           </div>
         </div>
@@ -170,15 +182,56 @@ export function DiagnosisResultView({
   duplicateInfo,
   mergedAnalysis,
 }: DiagnosisResultViewProps) {
-  // Track which cards are expanded (default: all collapsed)
+  // Track which schema cards are expanded
   const [expandedIndex, setExpandedIndex] = useState<number>(-1);
+
+  // Name editing state
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState('');
+  const [datasetNames, setDatasetNames] = useState<Record<number, string>>({});
 
   const totalFiles = diagnoses.length;
   const totalRows = diagnoses.reduce((sum, d) => sum + d.row_count, 0);
-  const totalIssues = diagnoses.reduce((sum, d) => {
-    const nullCount = Object.values(d.missing_values).reduce((s, c) => s + c, 0);
-    return sum + (nullCount > 0 ? 1 : 0) + d.type_suggestions.length;
-  }, 0);
+
+  // Show AgentRecommendation when schemas match and 2+ files
+  const showAgentRecommendation = schemasMatch && diagnoses.length >= 2;
+
+  // Convert diagnoses to Dataset objects for individual files
+  const datasets: Dataset[] = useMemo(() => {
+    return diagnoses.map((d, i) => ({
+      id: i,
+      name: datasetNames[i] || d.llm_analysis?.suggested_name || generateTableName(getFileName(d.file_path)),
+      status: determineStatus(d),
+      description: d.llm_analysis?.context || '',
+      files: [getFileName(d.file_path)],
+    }));
+  }, [diagnoses, datasetNames]);
+
+  // Create merged dataset
+  const mergedDataset: Dataset = useMemo(() => {
+    return {
+      id: 0,
+      name: datasetNames[0] || mergedAnalysis?.suggested_name || 'merged_dataset',
+      status: 'ready',
+      description: mergedAnalysis?.context || '',
+      files: diagnoses.map(d => getFileName(d.file_path)),
+    };
+  }, [diagnoses, mergedAnalysis, datasetNames]);
+
+  // Name editing handlers
+  const startEditing = (id: number, currentName: string) => {
+    setEditingId(id);
+    setEditName(currentName);
+  };
+
+  const saveEdit = (id: number) => {
+    setDatasetNames(prev => ({ ...prev, [id]: editName }));
+    setEditingId(null);
+  };
+
+  const handleImport = () => {
+    onImport(datasetNames);
+  };
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -186,12 +239,8 @@ export function DiagnosisResultView({
       <div className="flex items-center justify-between px-8 py-6 border-b border-border">
         <div>
           <h3 className="text-xl font-semibold text-foreground">
-            File Analysis
+            {totalFiles}개 파일 스캔 완료
           </h3>
-          <p className="text-sm text-muted-foreground mt-1">
-            {totalFiles} file{totalFiles > 1 ? 's' : ''}, {formatNumber(totalRows)} total rows
-            {totalIssues > 0 && `, ${totalIssues} potential issue${totalIssues > 1 ? 's' : ''}`}
-          </p>
         </div>
         <button
           onClick={onClose}
@@ -201,64 +250,76 @@ export function DiagnosisResultView({
         </button>
       </div>
 
-      {/* Merge Files Banner - shown when schemas match */}
-      {schemasMatch && diagnoses.length >= 2 && (
-        <div className="mx-8 mt-4 p-4 bg-primary/5 border border-primary/20 rounded-xl">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={mergeFiles}
-              onChange={(e) => onMergeFilesChange(e.target.checked)}
-              className="w-4 h-4 rounded border-primary/50 text-primary focus:ring-primary/50 cursor-pointer"
-            />
-            <div>
-              <span className="text-sm font-medium text-foreground">
-                {diagnoses.length}개의 파일을 하나의 데이터셋으로 통합
-              </span>
-              <span className="text-sm text-muted-foreground ml-2">
-                (총 {formatNumber(totalRows)}행)
-              </span>
-            </div>
-          </label>
-          {/* Deduplicate checkbox - shown when merge is enabled */}
-          {mergeFiles && (
-            <label className="flex items-center gap-3 cursor-pointer ml-7 mt-2">
-              <input
-                type="checkbox"
-                checked={removeDuplicates}
-                onChange={(e) => onRemoveDuplicatesChange(e.target.checked)}
-                className="w-4 h-4 rounded border-primary/50 text-primary focus:ring-primary/50 cursor-pointer"
-              />
-              <span className="text-sm text-muted-foreground">
-                중복된 행 제거 <span className="text-primary">(권장)</span>
-              </span>
-            </label>
-          )}
-          {/* Suggested merged dataset name from LLM */}
-          {mergeFiles && mergedAnalysis && (
-            <div className="ml-7 mt-3 pt-3 border-t border-primary/10">
-              <p className="text-sm text-muted-foreground">
-                제안된 데이터셋 이름:{' '}
-                <span className="font-medium text-foreground">{mergedAnalysis.suggested_name}</span>
-              </p>
-              {mergedAnalysis.context && (
-                <p className="text-xs text-muted-foreground mt-1">{mergedAnalysis.context}</p>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Scrollable Diagnosis Cards */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-8 py-4 space-y-3">
-        {diagnoses.map((diagnosis, index) => (
-          <FileDiagnosisCard
-            key={diagnosis.file_path}
-            diagnosis={diagnosis}
-            isExpanded={expandedIndex === index}
-            onToggle={() => setExpandedIndex(expandedIndex === index ? -1 : index)}
+      {/* Scrollable Content */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-8 py-4">
+        {/* Agent Recommendation - shown when schemas match */}
+        {showAgentRecommendation && (
+          <AgentRecommendation
+            fileCount={diagnoses.length}
+            totalRows={duplicateInfo?.total_rows || totalRows}
+            duplicateRows={duplicateInfo?.duplicate_rows || 0}
+            estimatedRows={duplicateInfo?.estimated_rows || totalRows}
+            isMerged={mergeFiles}
+            removeDuplicates={removeDuplicates}
+            onMergeChange={onMergeFilesChange}
+            onRemoveDuplicatesChange={onRemoveDuplicatesChange}
           />
-        ))}
+        )}
+
+        {/* Dataset Cards */}
+        {showAgentRecommendation && mergeFiles ? (
+          // Merged view: single card
+          <div className="space-y-4">
+            <DatasetCard
+              dataset={mergedDataset}
+              isEditing={editingId === 0}
+              editName={editName}
+              onStartEdit={startEditing}
+              onSaveEdit={saveEdit}
+              onEditNameChange={setEditName}
+            />
+
+            {/* Expandable schema details */}
+            <div className="mt-4 pt-4 border-t border-border">
+              <p className="text-sm text-muted-foreground mb-3">파일 상세 정보</p>
+              <div className="space-y-2">
+                {diagnoses.map((diagnosis, index) => (
+                  <FileDiagnosisCard
+                    key={diagnosis.file_path}
+                    diagnosis={diagnosis}
+                    isExpanded={expandedIndex === index}
+                    onToggle={() => setExpandedIndex(expandedIndex === index ? -1 : index)}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          // Individual datasets view
+          <div className="space-y-4">
+            {datasets.map((dataset, index) => (
+              <div key={dataset.id}>
+                <DatasetCard
+                  dataset={dataset}
+                  isEditing={editingId === dataset.id}
+                  editName={editName}
+                  onStartEdit={startEditing}
+                  onSaveEdit={saveEdit}
+                  onEditNameChange={setEditName}
+                />
+
+                {/* Expandable schema details per card */}
+                <div className="mt-2">
+                  <FileDiagnosisCard
+                    diagnosis={diagnoses[index]}
+                    isExpanded={expandedIndex === index}
+                    onToggle={() => setExpandedIndex(expandedIndex === index ? -1 : index)}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Footer Actions */}
@@ -273,11 +334,11 @@ export function DiagnosisResultView({
         </Button>
 
         <Button
-          onClick={onImport}
+          onClick={handleImport}
           disabled={isImporting}
           className="px-8 py-3.5 rounded-xl font-semibold"
         >
-          {isImporting ? 'Importing...' : `Import ${totalFiles > 1 ? 'All' : ''}`}
+          {isImporting ? 'Creating...' : 'Create Datasets'}
         </Button>
       </div>
     </div>

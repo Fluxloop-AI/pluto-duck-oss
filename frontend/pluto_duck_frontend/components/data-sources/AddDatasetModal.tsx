@@ -635,7 +635,7 @@ export function AddDatasetModal({
   }, [projectId, selectedFiles]);
 
   // Import files - called when Import button is clicked on diagnose step
-  const handleConfirmImport = useCallback(async () => {
+  const handleConfirmImport = useCallback(async (datasetNames: Record<number, string>) => {
     if (selectedFiles.length === 0) return;
 
     setIsImporting(true);
@@ -662,7 +662,8 @@ export function AddDatasetModal({
         return;
       }
 
-      const tableName = generateTableName(firstFile.name);
+      // Use edited name if provided, otherwise use merged analysis suggestion or default
+      const tableName = datasetNames[0] || mergedAnalysis?.suggested_name || generateTableName(firstFile.name);
 
       // First file: create table with replace mode
       try {
@@ -734,7 +735,10 @@ export function AddDatasetModal({
     const usedTableNames = new Set<string>();
 
     // Import files sequentially to avoid DB conflicts
-    for (const file of selectedFiles) {
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i];
+      const diagnosis = diagnosisResults?.[i];
+
       // Only Tauri files with paths can be imported
       if (!file.path) {
         errors.push(`${file.name}: No file path available (web upload not supported yet)`);
@@ -749,11 +753,12 @@ export function AddDatasetModal({
         continue;
       }
 
-      // Generate unique table name
-      let tableName = generateTableName(file.name);
+      // Use edited name if provided, otherwise use LLM suggestion or default
+      let tableName = datasetNames[i] || diagnosis?.llm_analysis?.suggested_name || generateTableName(file.name);
       let suffix = 1;
       while (usedTableNames.has(tableName)) {
-        tableName = `${generateTableName(file.name)}_${suffix}`;
+        const baseName = datasetNames[i] || diagnosis?.llm_analysis?.suggested_name || generateTableName(file.name);
+        tableName = `${baseName}_${suffix}`;
         suffix++;
       }
       usedTableNames.add(tableName);
@@ -792,7 +797,7 @@ export function AddDatasetModal({
       console.error('All files failed to import:', errors);
       // Keep modal open so user can see the files and retry
     }
-  }, [projectId, selectedFiles, mergeFiles, schemasMatch, removeDuplicates, onImportSuccess, onOpenChange]);
+  }, [projectId, selectedFiles, mergeFiles, schemasMatch, removeDuplicates, diagnosisResults, mergedAnalysis, onImportSuccess, onOpenChange]);
 
   // Go back from diagnose step to preview step
   const handleBackFromDiagnose = useCallback(() => {
