@@ -1010,12 +1010,23 @@ class DiagnoseFileRequestModel(BaseModel):
     file_type: Literal["csv", "parquet"] = Field(..., description="Type of file")
 
 
+class MergeContextRequest(BaseModel):
+    """Request for merge context when files have identical schemas."""
+
+    total_rows: int = Field(..., description="Total rows across all files")
+    duplicate_rows: int = Field(..., description="Number of duplicate rows")
+    estimated_rows: int = Field(..., description="Estimated rows after deduplication")
+    skipped: bool = Field(False, description="Whether duplicate calculation was skipped due to row limit")
+
+
 class DiagnoseFilesRequest(BaseModel):
     """Request to diagnose multiple files."""
 
     files: List[DiagnoseFileRequestModel] = Field(..., description="List of files to diagnose")
     use_cache: bool = Field(True, description="Use cached results if available")
     include_llm: bool = Field(False, description="Include LLM analysis (slower, provides insights)")
+    include_merge_analysis: bool = Field(False, description="Include merged dataset analysis (requires include_llm=true)")
+    merge_context: Optional[MergeContextRequest] = Field(None, description="Context for merging files with identical schemas")
 
 
 class ColumnSchemaResponse(BaseModel):
@@ -1146,10 +1157,18 @@ class FileDiagnosisResponse(BaseModel):
     llm_analysis: Optional[LLMAnalysisResponse] = None
 
 
+class MergedAnalysisResponse(BaseModel):
+    """Response for LLM-generated merged dataset analysis."""
+
+    suggested_name: str = Field(..., description="Suggested name for the merged dataset")
+    context: str = Field(..., description="Description of the merged dataset")
+
+
 class DiagnoseFilesResponse(BaseModel):
     """Response for multiple file diagnoses."""
 
     diagnoses: List[FileDiagnosisResponse]
+    merged_analysis: Optional[MergedAnalysisResponse] = Field(None, description="Merged dataset analysis (when include_merge_analysis=true)")
 
 
 # =============================================================================
@@ -1204,11 +1223,13 @@ async def diagnose_files(
     - Row count and file size
     - Type suggestions (optional, for detecting mismatched types)
     - LLM-generated analysis (when include_llm=true)
+    - Merged dataset analysis (when include_merge_analysis=true with merge_context)
 
     Use this to preview data quality before creating tables.
 
     Set use_cache=false to force fresh diagnosis even if cached results exist.
     Set include_llm=true to include LLM-generated analysis (slower).
+    Set include_merge_analysis=true with merge_context to get merged dataset name suggestion.
     """
     from pluto_duck_backend.app.services.asset.file_diagnosis_service import DiagnoseFileRequest
 
@@ -1220,14 +1241,33 @@ async def diagnose_files(
         for f in request.files
     ]
 
+    # Prepare merge_context dict if provided
+    merge_context_dict = None
+    if request.include_merge_analysis and request.merge_context:
+        merge_context_dict = {
+            "total_rows": request.merge_context.total_rows,
+            "duplicate_rows": request.merge_context.duplicate_rows,
+            "estimated_rows": request.merge_context.estimated_rows,
+            "skipped": request.merge_context.skipped,
+        }
+
     # Run diagnosis (with or without LLM analysis based on include_llm flag)
+    merged_analysis_response: Optional[MergedAnalysisResponse] = None
     try:
         if request.include_llm:
             # Include LLM analysis (slower)
-            all_diagnoses = await service.diagnose_files_with_llm(
+            diagnosis_result = await service.diagnose_files_with_llm(
                 files=file_requests,
                 use_cache=request.use_cache,
+                merge_context=merge_context_dict,
             )
+            all_diagnoses = diagnosis_result.diagnoses
+            # Extract merged analysis if present
+            if diagnosis_result.merged_analysis:
+                merged_analysis_response = MergedAnalysisResponse(
+                    suggested_name=diagnosis_result.merged_analysis.suggested_name,
+                    context=diagnosis_result.merged_analysis.context,
+                )
         else:
             # Technical diagnosis only (fast)
             all_diagnoses = service.diagnose_files(files=file_requests)
@@ -1334,5 +1374,5 @@ async def diagnose_files(
             )
         )
 
-    return DiagnoseFilesResponse(diagnoses=diagnoses)
+    return DiagnoseFilesResponse(diagnoses=diagnoses, merged_analysis=merged_analysis_response)
 

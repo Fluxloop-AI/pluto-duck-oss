@@ -3,7 +3,7 @@
 import { X, AlertTriangle, ArrowRight, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '../ui/button';
-import type { FileDiagnosis, ColumnSchema, TypeSuggestion, DuplicateCountResponse } from '../../lib/fileAssetApi';
+import type { FileDiagnosis, ColumnSchema, TypeSuggestion, DuplicateCountResponse, MergedAnalysis } from '../../lib/fileAssetApi';
 
 interface SelectedFile {
   id: string;
@@ -25,6 +25,7 @@ interface DiagnosisResultViewProps {
   removeDuplicates: boolean;
   onRemoveDuplicatesChange: (checked: boolean) => void;
   duplicateInfo: DuplicateCountResponse | null;
+  mergedAnalysis: MergedAnalysis | null;
 }
 
 // Helper to format file size
@@ -167,6 +168,7 @@ export function DiagnosisResultView({
   removeDuplicates,
   onRemoveDuplicatesChange,
   duplicateInfo,
+  mergedAnalysis,
 }: DiagnosisResultViewProps) {
   // Track which cards are expanded (default: all collapsed)
   const [expandedIndex, setExpandedIndex] = useState<number>(-1);
@@ -231,6 +233,18 @@ export function DiagnosisResultView({
                 중복된 행 제거 <span className="text-primary">(권장)</span>
               </span>
             </label>
+          )}
+          {/* Suggested merged dataset name from LLM */}
+          {mergeFiles && mergedAnalysis && (
+            <div className="ml-7 mt-3 pt-3 border-t border-primary/10">
+              <p className="text-sm text-muted-foreground">
+                제안된 데이터셋 이름:{' '}
+                <span className="font-medium text-foreground">{mergedAnalysis.suggested_name}</span>
+              </p>
+              {mergedAnalysis.context && (
+                <p className="text-xs text-muted-foreground mt-1">{mergedAnalysis.context}</p>
+              )}
+            </div>
           )}
         </div>
       )}

@@ -415,6 +415,32 @@ class DiagnoseFileRequest:
     file_type: Literal["csv", "parquet"]
 
 
+@dataclass
+class MergedAnalysis:
+    """Merged dataset analysis from LLM.
+
+    Attributes:
+        suggested_name: Suggested name for merged dataset
+        context: Description of merged dataset
+    """
+
+    suggested_name: str
+    context: str
+
+
+@dataclass
+class DiagnosisWithMergedAnalysis:
+    """Result of file diagnosis with optional merged analysis.
+
+    Attributes:
+        diagnoses: List of per-file diagnoses
+        merged_analysis: Merged dataset analysis (when merge_context provided)
+    """
+
+    diagnoses: List[FileDiagnosis]
+    merged_analysis: Optional[MergedAnalysis] = None
+
+
 # =============================================================================
 # File Diagnosis Service
 # =============================================================================
@@ -1351,22 +1377,32 @@ class FileDiagnosisService:
         self,
         files: List[DiagnoseFileRequest],
         use_cache: bool = True,
-    ) -> List[FileDiagnosis]:
+        merge_context: Optional[Dict[str, Any]] = None,
+    ) -> DiagnosisWithMergedAnalysis:
         """Diagnose multiple files with LLM analysis.
 
         This async method:
         1. Performs technical diagnosis for each file (cache-aware)
         2. Runs LLM analysis on files that needed fresh diagnosis
         3. Merges LLM results and updates cache
+        4. If merge_context provided, includes merged dataset analysis
 
         Args:
             files: List of files to diagnose
             use_cache: Whether to use cached results (default True)
+            merge_context: Optional dict with merge context for identical schema files
+                - total_rows: Total rows across all files
+                - duplicate_rows: Number of duplicate rows
+                - estimated_rows: Estimated rows after deduplication
+                - skipped: Whether duplicate calculation was skipped
 
         Returns:
-            List of FileDiagnosis with LLM analysis included
+            DiagnosisWithMergedAnalysis containing diagnoses and optional merged analysis
         """
-        from .llm_analysis_service import analyze_datasets_with_llm
+        from .llm_analysis_service import (
+            analyze_datasets_with_llm,
+            MergeContext as LLMMergeContext,
+        )
 
         diagnoses: List[FileDiagnosis] = []
         new_diagnoses: List[FileDiagnosis] = []  # Diagnoses that need LLM analysis
@@ -1389,20 +1425,45 @@ class FileDiagnosisService:
 
             diagnoses.append(diagnosis)
 
+        # Prepare merge context for LLM if provided
+        llm_merge_context: Optional[LLMMergeContext] = None
+        if merge_context is not None:
+            llm_merge_context = LLMMergeContext(
+                schemas_identical=True,  # API only sends merge_context when schemas match
+                total_files=len(files),
+                total_rows=merge_context.get("total_rows", 0),
+                duplicate_rows=merge_context.get("duplicate_rows", 0),
+                estimated_rows_after_dedup=merge_context.get("estimated_rows", 0),
+                skipped=merge_context.get("skipped", False),
+            )
+
+        merged_analysis: Optional[MergedAnalysis] = None
+
         # Step 2: Run LLM analysis on new diagnoses
         if new_diagnoses:
-            logger.info(f"Running LLM analysis on {len(new_diagnoses)} files")
+            logger.info(f"Running LLM analysis on {len(new_diagnoses)} files (merge_context={llm_merge_context is not None})")
             try:
-                llm_results = await analyze_datasets_with_llm(new_diagnoses)
+                batch_result = await analyze_datasets_with_llm(
+                    new_diagnoses,
+                    merge_context=llm_merge_context,
+                )
 
                 # Merge LLM results into diagnoses
                 for diagnosis in new_diagnoses:
-                    if diagnosis.file_path in llm_results:
-                        diagnosis.llm_analysis = llm_results[diagnosis.file_path]
+                    if diagnosis.file_path in batch_result.file_results:
+                        diagnosis.llm_analysis = batch_result.file_results[diagnosis.file_path]
                         logger.info(f"LLM analysis added for {diagnosis.file_path}")
 
                     # Save updated diagnosis to cache
                     self.save_diagnosis(diagnosis)
+
+                # Extract merged analysis if present
+                if batch_result.merged_result is not None:
+                    merged_analysis = MergedAnalysis(
+                        suggested_name=batch_result.merged_result.suggested_name,
+                        context=batch_result.merged_result.context,
+                    )
+                    logger.info(f"Merged analysis: {merged_analysis.suggested_name}")
 
             except Exception as e:
                 logger.error(f"LLM analysis failed: {e}")
@@ -1411,7 +1472,10 @@ class FileDiagnosisService:
                     if diagnosis.llm_analysis is None:
                         self.save_diagnosis(diagnosis)
 
-        return diagnoses
+        return DiagnosisWithMergedAnalysis(
+            diagnoses=diagnoses,
+            merged_analysis=merged_analysis,
+        )
 
     # =========================================================================
     # Duplicate Counting Methods

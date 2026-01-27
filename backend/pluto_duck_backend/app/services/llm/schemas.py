@@ -6,7 +6,7 @@ to ensure consistent JSON responses from LLM.
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -46,4 +46,12 @@ class BatchAnalysisSchema(BaseModel):
 
     files: List[FileAnalysisSchema] = Field(
         description="List of file analysis results"
+    )
+    merged_suggested_name: Optional[str] = Field(
+        default=None,
+        description="Suggested name for merged dataset (only when merge_context is provided)"
+    )
+    merged_context: Optional[str] = Field(
+        default=None,
+        description="Description of merged dataset (only when merge_context is provided)"
     )

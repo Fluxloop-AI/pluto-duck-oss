@@ -172,14 +172,31 @@ export interface FileDiagnosis {
   llm_analysis?: LLMAnalysis;
 }
 
+// Merge context for LLM analysis
+export interface MergeContext {
+  total_rows: number;
+  duplicate_rows: number;
+  estimated_rows: number;
+  skipped: boolean;
+}
+
+// Merged analysis result from LLM
+export interface MergedAnalysis {
+  suggested_name: string;
+  context: string;
+}
+
 export interface DiagnoseFilesRequest {
   files: DiagnoseFileRequest[];
   use_cache?: boolean;
   include_llm?: boolean;
+  include_merge_analysis?: boolean;
+  merge_context?: MergeContext;
 }
 
 export interface DiagnoseFilesResponse {
   diagnoses: FileDiagnosis[];
+  merged_analysis?: MergedAnalysis;
 }
 
 // =============================================================================
@@ -315,23 +332,37 @@ export async function previewFileData(
  * @param files - List of files to diagnose
  * @param useCache - Whether to use cached results (default: true)
  * @param includeLlm - Whether to include LLM analysis (default: false, slower)
+ * @param includeMergeAnalysis - Whether to include merge analysis when schemas match (default: false)
+ * @param mergeContext - Merge context with duplicate info (only when includeMergeAnalysis=true)
  */
 export async function diagnoseFiles(
   projectId: string,
   files: DiagnoseFileRequest[],
   useCache: boolean = true,
-  includeLlm: boolean = false
+  includeLlm: boolean = false,
+  includeMergeAnalysis: boolean = false,
+  mergeContext?: MergeContext
 ): Promise<DiagnoseFilesResponse> {
   const url = buildUrl('/files/diagnose', projectId);
+
+  const requestBody: DiagnoseFilesRequest = {
+    files,
+    use_cache: useCache,
+    include_llm: includeLlm,
+  };
+
+  // Only include merge analysis fields when requested
+  if (includeMergeAnalysis) {
+    requestBody.include_merge_analysis = true;
+    if (mergeContext) {
+      requestBody.merge_context = mergeContext;
+    }
+  }
 
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      files,
-      use_cache: useCache,
-      include_llm: includeLlm,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   const result = await handleResponse<DiagnoseFilesResponse>(response);

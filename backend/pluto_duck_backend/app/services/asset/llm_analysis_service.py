@@ -10,8 +10,9 @@ import asyncio
 import json
 import logging
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from pluto_duck_backend.app.services.llm import (
     BatchAnalysisSchema,
@@ -33,14 +34,48 @@ logger = logging.getLogger(__name__)
 LLM_BATCH_SIZE = 5
 
 
-def format_diagnoses_for_llm(diagnoses: List[FileDiagnosis]) -> str:
+@dataclass
+class MergeContext:
+    """Context information for merging multiple files with identical schemas."""
+
+    schemas_identical: bool
+    total_files: int
+    total_rows: int
+    duplicate_rows: int
+    estimated_rows_after_dedup: int
+    skipped: bool  # True if duplicate calculation was skipped due to row limit
+
+
+@dataclass
+class MergedAnalysisResult:
+    """LLM analysis result for merged dataset."""
+
+    suggested_name: str
+    context: str
+
+
+@dataclass
+class BatchLLMAnalysisResult:
+    """Combined result containing per-file analyses and optional merged analysis."""
+
+    file_results: Dict[str, LLMAnalysisResult]
+    merged_result: Optional[MergedAnalysisResult] = None
+
+
+def format_diagnoses_for_llm(
+    diagnoses: List[FileDiagnosis],
+    merge_context: Optional[MergeContext] = None,
+) -> str:
     """Format file diagnoses as JSON for LLM input.
 
     Args:
         diagnoses: List of FileDiagnosis objects
+        merge_context: Optional context for merging files with identical schemas
 
     Returns:
-        JSON string representing the diagnoses in LLM-friendly format
+        JSON string representing the diagnoses in LLM-friendly format.
+        When merge_context is provided, returns a JSON object with 'files' and 'merge_context' keys.
+        Otherwise, returns a JSON array of file information.
     """
     formatted = []
     for diag in diagnoses:
@@ -63,6 +98,21 @@ def format_diagnoses_for_llm(diagnoses: List[FileDiagnosis]) -> str:
             ],
         }
         formatted.append(file_info)
+
+    # When merge_context is provided, wrap in object with merge context
+    if merge_context is not None:
+        result = {
+            "files": formatted,
+            "merge_context": {
+                "schemas_identical": merge_context.schemas_identical,
+                "total_files": merge_context.total_files,
+                "total_rows": merge_context.total_rows,
+                "duplicate_rows": merge_context.duplicate_rows,
+                "estimated_rows_after_dedup": merge_context.estimated_rows_after_dedup,
+                "skipped": merge_context.skipped,
+            },
+        }
+        return json.dumps(result, ensure_ascii=False, indent=2)
 
     return json.dumps(formatted, ensure_ascii=False, indent=2)
 
@@ -104,21 +154,23 @@ def _schema_to_result(
 async def analyze_batch_with_llm(
     diagnoses: List[FileDiagnosis],
     llm_service: LLMService,
-) -> Dict[str, LLMAnalysisResult]:
+    merge_context: Optional[MergeContext] = None,
+) -> BatchLLMAnalysisResult:
     """Analyze a batch of file diagnoses using LLM with structured output.
 
     Args:
         diagnoses: List of FileDiagnosis objects to analyze
         llm_service: LLMService instance
+        merge_context: Optional context for merging files with identical schemas
 
     Returns:
-        Dict mapping file_path to LLMAnalysisResult
+        BatchLLMAnalysisResult containing per-file results and optional merged analysis
     """
     if not diagnoses:
-        return {}
+        return BatchLLMAnalysisResult(file_results={})
 
-    # Format diagnoses for LLM
-    input_json = format_diagnoses_for_llm(diagnoses)
+    # Format diagnoses for LLM (with or without merge_context)
+    input_json = format_diagnoses_for_llm(diagnoses, merge_context)
 
     # Load and format prompt
     prompt_template = load_dataset_analysis_prompt()
@@ -126,7 +178,7 @@ async def analyze_batch_with_llm(
 
     # Call LLM with structured output
     try:
-        logger.info(f"[LLM] Calling LLM for {len(diagnoses)} files...")
+        logger.info(f"[LLM] Calling LLM for {len(diagnoses)} files (merge_context={merge_context is not None})...")
 
         batch_result = await llm_service.complete_structured(
             prompt=prompt,
@@ -136,13 +188,13 @@ async def analyze_batch_with_llm(
         logger.info(f"[LLM] Got structured response with {len(batch_result.files)} files")
 
         # Convert to results dict
-        results: Dict[str, LLMAnalysisResult] = {}
+        file_results: Dict[str, LLMAnalysisResult] = {}
         analyzed_at = datetime.now(UTC)
         model_used = llm_service.model_name
 
         for file_schema in batch_result.files:
             file_path = file_schema.file_path
-            results[file_path] = _schema_to_result(file_schema, analyzed_at, model_used)
+            file_results[file_path] = _schema_to_result(file_schema, analyzed_at, model_used)
 
             logger.info(f"[LLM] Parsed result for {file_path}:")
             logger.info(f"  - suggested_name: {file_schema.suggested_name}")
@@ -155,30 +207,46 @@ async def analyze_batch_with_llm(
             logger.info(f"  - potential: {len(file_schema.potential)} items")
             logger.info(f"  - issues: {len(file_schema.issues)} items")
 
-        return results
+        # Extract merged analysis result if available
+        merged_result: Optional[MergedAnalysisResult] = None
+        if batch_result.merged_suggested_name and batch_result.merged_context:
+            merged_result = MergedAnalysisResult(
+                suggested_name=batch_result.merged_suggested_name,
+                context=batch_result.merged_context,
+            )
+            logger.info(f"[LLM] Merged analysis result:")
+            logger.info(f"  - merged_suggested_name: {merged_result.suggested_name}")
+            logger.info(f"  - merged_context: {merged_result.context[:100]}...")
+
+        return BatchLLMAnalysisResult(file_results=file_results, merged_result=merged_result)
     except Exception as e:
         logger.error(f"[LLM] Analysis failed: {e}", exc_info=True)
-        return {}
+        return BatchLLMAnalysisResult(file_results={})
 
 
 async def analyze_datasets_with_llm(
     diagnoses: List[FileDiagnosis],
     llm_service: LLMService | None = None,
-) -> Dict[str, LLMAnalysisResult]:
+    merge_context: Optional[MergeContext] = None,
+) -> BatchLLMAnalysisResult:
     """Analyze multiple file diagnoses using LLM with batching.
 
     Splits diagnoses into batches of LLM_BATCH_SIZE and processes
     them in parallel using asyncio.gather().
 
+    When merge_context is provided, all files are analyzed in a single batch
+    to allow the LLM to generate a unified merged analysis.
+
     Args:
         diagnoses: List of FileDiagnosis objects to analyze
         llm_service: Optional LLMService instance. If None, creates a new one.
+        merge_context: Optional context for merging files with identical schemas
 
     Returns:
-        Dict mapping file_path to LLMAnalysisResult for all analyzed files
+        BatchLLMAnalysisResult containing per-file results and optional merged analysis
     """
     if not diagnoses:
-        return {}
+        return BatchLLMAnalysisResult(file_results={})
 
     # Get LLM service if not provided
     if llm_service is None:
@@ -188,7 +256,15 @@ async def analyze_datasets_with_llm(
             f"provider={llm_service.provider_name}"
         )
 
-    # Split into batches
+    # When merge_context is provided, analyze all files in a single batch
+    # to get a unified merged analysis
+    if merge_context is not None:
+        logger.info(
+            f"Analyzing {len(diagnoses)} files in single batch with merge_context"
+        )
+        return await analyze_batch_with_llm(diagnoses, llm_service, merge_context)
+
+    # Otherwise, split into batches for parallel processing
     batches: List[List[FileDiagnosis]] = []
     for i in range(0, len(diagnoses), LLM_BATCH_SIZE):
         batches.append(diagnoses[i : i + LLM_BATCH_SIZE])
@@ -206,13 +282,13 @@ async def analyze_datasets_with_llm(
     batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Merge results
-    all_results: Dict[str, LLMAnalysisResult] = {}
+    all_file_results: Dict[str, LLMAnalysisResult] = {}
     for result in batch_results:
         if isinstance(result, Exception):
             logger.error(f"Batch analysis failed: {result}")
             continue
-        if isinstance(result, dict):
-            all_results.update(result)
+        if isinstance(result, BatchLLMAnalysisResult):
+            all_file_results.update(result.file_results)
 
-    logger.info(f"LLM analysis completed: {len(all_results)}/{len(diagnoses)} files analyzed")
-    return all_results
+    logger.info(f"LLM analysis completed: {len(all_file_results)}/{len(diagnoses)} files analyzed")
+    return BatchLLMAnalysisResult(file_results=all_file_results)

@@ -8,7 +8,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import { Dialog, DialogContent } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { isTauriRuntime } from '../../lib/tauriRuntime';
-import { importFile, diagnoseFiles, countDuplicateRows, type FileType, type FileDiagnosis, type DiagnoseFileRequest, type DuplicateCountResponse } from '../../lib/fileAssetApi';
+import { importFile, diagnoseFiles, countDuplicateRows, type FileType, type FileDiagnosis, type DiagnoseFileRequest, type DuplicateCountResponse, type MergedAnalysis } from '../../lib/fileAssetApi';
 import { DiagnosisResultView } from './DiagnosisResultView';
 import { DatasetAnalyzingView } from './DatasetAnalyzingView';
 
@@ -318,6 +318,7 @@ export function AddDatasetModal({
   const [removeDuplicates, setRemoveDuplicates] = useState(true);
   const [llmReady, setLlmReady] = useState(false);
   const [duplicateInfo, setDuplicateInfo] = useState<DuplicateCountResponse | null>(null);
+  const [mergedAnalysis, setMergedAnalysis] = useState<MergedAnalysis | null>(null);
 
   // Ref for hidden file input (web fallback)
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -337,6 +338,7 @@ export function AddDatasetModal({
       setRemoveDuplicates(true);
       setLlmReady(false);
       setDuplicateInfo(null);
+      setMergedAnalysis(null);
     }
   }, [open]);
 
@@ -573,20 +575,12 @@ export function AddDatasetModal({
       setMergeFiles(false); // Reset merge checkbox when re-scanning
       setDuplicateInfo(null); // Reset duplicate info
 
-      // Second API call: with LLM analysis (slower)
-      try {
-        const llmResponse = await diagnoseFiles(projectId, filesToDiagnose, true, true);
-        setDiagnosisResults(llmResponse.diagnoses);
-      } catch (llmError) {
-        // LLM failure is not critical - we already have the fast diagnosis
-        console.warn('LLM analysis failed, using basic diagnosis:', llmError);
-      }
-
-      // If schemas match, count duplicates in parallel with LLM
+      // If schemas match, count duplicates first to include in LLM merge context
+      let dupResponse: DuplicateCountResponse | null = null;
       if (schemasIdentical) {
         console.log('[AddDatasetModal] Calling countDuplicateRows API...');
         try {
-          const dupResponse = await countDuplicateRows(projectId, filesToDiagnose);
+          dupResponse = await countDuplicateRows(projectId, filesToDiagnose);
           setDuplicateInfo(dupResponse);
           console.log('[AddDatasetModal] Duplicate count result:', dupResponse);
         } catch (dupError) {
@@ -595,6 +589,37 @@ export function AddDatasetModal({
         }
       } else {
         console.log('[AddDatasetModal] Skipping duplicate count - schemas do not match');
+      }
+
+      // Second API call: with LLM analysis (slower)
+      try {
+        // If schemas match and we have duplicate info, include merge analysis
+        const includeMergeAnalysis = schemasIdentical && dupResponse !== null;
+        const mergeContext = dupResponse ? {
+          total_rows: dupResponse.total_rows,
+          duplicate_rows: dupResponse.duplicate_rows,
+          estimated_rows: dupResponse.estimated_rows,
+          skipped: dupResponse.skipped,
+        } : undefined;
+
+        const llmResponse = await diagnoseFiles(
+          projectId,
+          filesToDiagnose,
+          true,
+          true,
+          includeMergeAnalysis,
+          mergeContext
+        );
+        setDiagnosisResults(llmResponse.diagnoses);
+
+        // Store merged analysis if present
+        if (llmResponse.merged_analysis) {
+          setMergedAnalysis(llmResponse.merged_analysis);
+          console.log('[AddDatasetModal] Merged analysis received:', llmResponse.merged_analysis);
+        }
+      } catch (llmError) {
+        // LLM failure is not critical - we already have the fast diagnosis
+        console.warn('LLM analysis failed, using basic diagnosis:', llmError);
       }
 
       setLlmReady(true);
@@ -840,6 +865,7 @@ export function AddDatasetModal({
             removeDuplicates={removeDuplicates}
             onRemoveDuplicatesChange={setRemoveDuplicates}
             duplicateInfo={duplicateInfo}
+            mergedAnalysis={mergedAnalysis}
           />
         )}
       </DialogContent>
