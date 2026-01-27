@@ -32,11 +32,30 @@ const ANALYSIS_STEPS: AnalysisStep[] = [
   { id: 'columns', label: 'Column structure analysis complete', processingLabel: 'Analyzing column structure...' },
   { id: 'quality', label: 'Data quality check complete', processingLabel: 'Checking data quality...' },
   { id: 'statistics', label: 'Statistical analysis complete', processingLabel: 'Analyzing statistics...' },
-  { id: 'naming', label: 'Dataset name ready', processingLabel: 'Thinking of dataset name...' },
-  { id: 'description', label: 'Description ready', processingLabel: 'Writing description...' },
-  { id: 'understanding', label: 'Data understanding complete', processingLabel: 'Understanding data...' },
-  { id: 'integration', label: 'Integration complete', processingLabel: 'Integrating checks...' },
 ];
+
+// LLM 대기 중 순차적으로 쌓아갈 메시지
+const LLM_WAITING_MESSAGES = [
+  'Scanning file structure...',
+  'Evaluating data format...',
+  'Checking field compatibility...',
+  'Reviewing data patterns...',
+  'Assessing conversion suitability...',
+  'Validating schema structure...',
+  'Examining data relationships...',
+  'Processing metadata...',
+  'Analyzing data distribution...',
+  'Detecting potential issues...',
+  'Evaluating data consistency...',
+  'Checking value ranges...',
+  'Identifying key columns...',
+  'Assessing data completeness...',
+  'Preparing recommendations...',
+  'Finalizing assessment...',
+];
+
+// 최대 표시 컬럼 수
+const MAX_VISIBLE_COLUMNS = 6;
 
 // Helper functions
 function formatFileSize(bytes: number): string {
@@ -47,25 +66,6 @@ function formatFileSize(bytes: number): string {
 
 function getFileNameFromPath(filePath: string): string {
   return filePath.split('/').pop() || filePath;
-}
-
-function getColumnTypeSummaryForFile(diagnosis: FileDiagnosis): { numeric: number; text: number; date: number; other: number } {
-  const summary = { numeric: 0, text: 0, date: 0, other: 0 };
-
-  for (const col of diagnosis.columns) {
-    const type = col.type.toLowerCase();
-    if (type.includes('int') || type.includes('float') || type.includes('double') || type.includes('decimal') || type.includes('numeric')) {
-      summary.numeric++;
-    } else if (type.includes('varchar') || type.includes('text') || type.includes('string') || type.includes('char')) {
-      summary.text++;
-    } else if (type.includes('date') || type.includes('time') || type.includes('timestamp')) {
-      summary.date++;
-    } else {
-      summary.other++;
-    }
-  }
-
-  return summary;
 }
 
 function calculateMissingRateForFile(diagnosis: FileDiagnosis): number {
@@ -152,6 +152,24 @@ export function DatasetAnalyzingView({
 
   const [visibleResults, setVisibleResults] = useState<Record<string, boolean>>({});
 
+  // Track when data first arrives (prevents re-trigger on subsequent updates)
+  const [dataArrived, setDataArrived] = useState(false);
+
+  // Phase 1 완료 상태
+  const [phase1Complete, setPhase1Complete] = useState(false);
+
+  // LLM 대기 중 표시할 메시지들 (쌓아가는 구조)
+  const [llmWaitingMessages, setLlmWaitingMessages] = useState<string[]>([]);
+  // 현재 진행 중인 메시지 인덱스 (-1이면 진행 중인 것 없음)
+  const [currentLlmMessageIndex, setCurrentLlmMessageIndex] = useState(-1);
+
+  // Track which phase we've started processing (using refs to avoid cleanup issues)
+  const phase1StartedRef = useRef(false);
+  const llmWaitingStartedRef = useRef(false);
+
+  // Steps 1-5 IDs (file/data analysis)
+  const PHASE1_STEPS = ['files', 'parsing', 'columns', 'quality', 'statistics'];
+
   // Auto-scroll when content changes
   useEffect(() => {
     if (scrollRef.current) {
@@ -160,19 +178,7 @@ export function DatasetAnalyzingView({
         behavior: 'smooth'
       });
     }
-  }, [stepStatuses, visibleResults]);
-
-  // Track which phase we've started processing (using refs to avoid cleanup issues)
-  const phase1StartedRef = useRef(false);
-  const phase2StartedRef = useRef(false);
-
-  // Track when data first arrives (prevents re-trigger on subsequent updates)
-  const [dataArrived, setDataArrived] = useState(false);
-
-  // Steps 1-5 IDs (file/data analysis)
-  const PHASE1_STEPS = ['files', 'parsing', 'columns', 'quality', 'statistics'];
-  // Steps 6-9 IDs (LLM analysis)
-  const PHASE2_STEPS = ['naming', 'description', 'understanding', 'integration'];
+  }, [stepStatuses, visibleResults, llmWaitingMessages, currentLlmMessageIndex]);
 
   // Start with first step processing immediately on mount
   useEffect(() => {
@@ -198,18 +204,16 @@ export function DatasetAnalyzingView({
       if (!isActive) return;
 
       if (currentIndex >= PHASE1_STEPS.length) {
-        // Phase 1 complete, start phase 2 processing indicator if not started yet
-        if (!phase2StartedRef.current) {
-          setStepStatuses((prev) => ({ ...prev, naming: 'processing' }));
-        }
+        // Phase 1 complete
+        setPhase1Complete(true);
         return;
       }
 
       const stepId = PHASE1_STEPS[currentIndex];
       setStepStatuses((prev) => ({ ...prev, [stepId]: 'processing' }));
 
-      // Processing time for each step (300-500ms as per plan)
-      const processingTime = 300 + Math.random() * 200;
+      // Processing time for each step (600-1000ms)
+      const processingTime = 600 + Math.random() * 400;
 
       setTimeout(() => {
         if (!isActive) return;
@@ -219,10 +223,10 @@ export function DatasetAnalyzingView({
         setTimeout(() => {
           if (!isActive) return;
           setVisibleResults((prev) => ({ ...prev, [stepId]: true }));
-        }, 150);
+        }, 300);
 
         currentIndex++;
-        setTimeout(processPhase1Step, 300);
+        setTimeout(processPhase1Step, 500);
       }, processingTime);
     };
 
@@ -235,54 +239,56 @@ export function DatasetAnalyzingView({
     };
   }, [dataArrived]);
 
-  // Phase 2: Process steps 6-9 when llmReady becomes true
+  // LLM 대기 중 메시지 쌓아가기 애니메이션
   useEffect(() => {
-    if (!llmReady || phase2StartedRef.current) return;
+    if (!phase1Complete || llmReady || llmWaitingStartedRef.current) return;
 
-    phase2StartedRef.current = true;
+    llmWaitingStartedRef.current = true;
     let isActive = true;
     let currentIndex = 0;
 
-    const processPhase2Step = () => {
+    // 첫 번째 메시지 즉시 표시 (processing 상태)
+    setCurrentLlmMessageIndex(0);
+
+    const addNextMessage = () => {
       if (!isActive) return;
 
-      if (currentIndex >= PHASE2_STEPS.length) {
-        // All steps complete, trigger onComplete (600-800ms delay as per plan)
-        const completeDelay = 600 + Math.random() * 200;
-        setTimeout(() => {
-          if (isActive) onComplete();
-        }, completeDelay);
-        return;
+      // 현재 메시지를 완료 상태로 (배열에 추가)
+      setLlmWaitingMessages((prev) => [...prev, LLM_WAITING_MESSAGES[currentIndex]]);
+      currentIndex++;
+
+      // 다음 메시지가 있으면 진행
+      if (currentIndex < LLM_WAITING_MESSAGES.length) {
+        setCurrentLlmMessageIndex(currentIndex);
+        // 1500-2500ms 간격으로 다음 메시지
+        const interval = 1500 + Math.random() * 1000;
+        setTimeout(addNextMessage, interval);
+      } else {
+        // 모든 메시지 완료, 마지막에서 대기 (인덱스를 -1로 설정하여 processing 표시 없앰)
+        setCurrentLlmMessageIndex(-1);
       }
-
-      const stepId = PHASE2_STEPS[currentIndex];
-      setStepStatuses((prev) => ({ ...prev, [stepId]: 'processing' }));
-
-      // Faster processing for LLM steps since data is already ready
-      const processingTime = 300 + Math.random() * 150;
-
-      setTimeout(() => {
-        if (!isActive) return;
-
-        setStepStatuses((prev) => ({ ...prev, [stepId]: 'completed' }));
-
-        setTimeout(() => {
-          if (!isActive) return;
-          setVisibleResults((prev) => ({ ...prev, [stepId]: true }));
-        }, 150);
-
-        currentIndex++;
-        setTimeout(processPhase2Step, 250);
-      }, processingTime);
     };
 
-    // Start processing phase 2
-    const startTimer = setTimeout(processPhase2Step, 200);
+    // 첫 번째 메시지 완료 후 다음으로 진행 (1.5-2.5초 후)
+    const initialDelay = 1500 + Math.random() * 1000;
+    const timer = setTimeout(addNextMessage, initialDelay);
 
     return () => {
       isActive = false;
-      clearTimeout(startTimer);
+      clearTimeout(timer);
     };
+  }, [phase1Complete, llmReady]);
+
+  // LLM 준비 완료 시 처리
+  useEffect(() => {
+    if (!llmReady) return;
+
+    // 짧은 딜레이 후 완료 처리
+    const timer = setTimeout(() => {
+      onComplete();
+    }, 300);
+
+    return () => clearTimeout(timer);
   }, [llmReady, onComplete]);
 
   const renderStepIcon = (status: StepStatus) => {
@@ -347,17 +353,20 @@ export function DatasetAnalyzingView({
         return (
           <div className="ml-7 mt-1 space-y-1 animate-fade-in">
             {diagnosisResults!.map((diagnosis) => {
-              const typeSummary = getColumnTypeSummaryForFile(diagnosis);
+              const visibleColumns = diagnosis.columns.slice(0, MAX_VISIBLE_COLUMNS);
+              const remainingCount = diagnosis.columns.length - MAX_VISIBLE_COLUMNS;
               return (
                 <div key={diagnosis.file_path} className="space-y-0.5">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-muted-foreground text-xs font-mono">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-muted-foreground text-xs font-mono mr-1">
                       {getFileNameFromPath(diagnosis.file_path)}
                     </span>
-                    <ResultTag variant="count">{diagnosis.columns.length} columns</ResultTag>
-                    {typeSummary.numeric > 0 && <ResultTag>Numeric {typeSummary.numeric}</ResultTag>}
-                    {typeSummary.text > 0 && <ResultTag>Text {typeSummary.text}</ResultTag>}
-                    {typeSummary.date > 0 && <ResultTag>Date {typeSummary.date}</ResultTag>}
+                    {visibleColumns.map((col) => (
+                      <ResultTag key={col.name}>{col.name}</ResultTag>
+                    ))}
+                    {remainingCount > 0 && (
+                      <ResultTag variant="count">+{remainingCount} more</ResultTag>
+                    )}
                   </div>
                 </div>
               );
@@ -416,17 +425,6 @@ export function DatasetAnalyzingView({
           </div>
         );
 
-      // LLM-ready steps (6-9): Show minimal result
-      case 'naming':
-      case 'description':
-      case 'understanding':
-      case 'integration':
-        return (
-          <div className="ml-7 mt-1 animate-fade-in">
-            <ResultTag>Ready</ResultTag>
-          </div>
-        );
-
       default:
         return null;
     }
@@ -482,6 +480,32 @@ export function DatasetAnalyzingView({
                   </div>
                 );
               })}
+
+              {/* LLM 대기 중 완료된 메시지들 */}
+              {llmWaitingMessages.map((message, index) => (
+                <div key={index} className="animate-slide-in">
+                  <div className="flex items-center gap-3">
+                    <div className="w-4 h-4 rounded-full bg-foreground flex items-center justify-center">
+                      <Check className="w-2.5 h-2.5 text-background" strokeWidth={3} />
+                    </div>
+                    <span className="text-sm text-muted-foreground">
+                      {message.replace('...', '')}
+                    </span>
+                  </div>
+                </div>
+              ))}
+
+              {/* LLM 대기 중 현재 진행 중인 메시지 */}
+              {currentLlmMessageIndex >= 0 && currentLlmMessageIndex < LLM_WAITING_MESSAGES.length && (
+                <div className="animate-slide-in">
+                  <div className="flex items-center gap-3">
+                    <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
+                    <span className="text-sm text-foreground font-medium">
+                      {LLM_WAITING_MESSAGES[currentLlmMessageIndex]}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
