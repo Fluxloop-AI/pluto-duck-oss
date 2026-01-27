@@ -19,10 +19,17 @@ from pluto_duck_backend.app.services.asset.file_diagnosis_service import (
 )
 from pluto_duck_backend.app.services.asset.llm_analysis_service import (
     LLM_BATCH_SIZE,
+    BatchLLMAnalysisResult,
     analyze_batch_with_llm,
     analyze_datasets_with_llm,
     format_diagnoses_for_llm,
-    parse_llm_response,
+)
+from pluto_duck_backend.app.services.llm import (
+    BatchAnalysisSchema,
+    FileAnalysisSchema,
+    IssueItemSchema,
+    LLMService,
+    PotentialItemSchema,
 )
 
 
@@ -143,141 +150,54 @@ class TestFormatDiagnosesForLLM:
         assert item["column_statistics"][0]["semantic_type"] == "numeric"
 
 
-class TestParseLLMResponse:
-    """Test parse_llm_response function."""
-
-    def test_parse_single_file_response(self, sample_diagnosis: FileDiagnosis):
-        """Test parsing response for single file."""
-        response = json.dumps({
-            "suggested_name": "sales_transactions",
-            "context": "This is a sales transaction dataset containing product sales information.",
-            "potential": [
-                {"question": "What are the top selling products?", "analysis": "Group by product_name and sum quantities"},
-                {"question": "What is the average order value?", "analysis": "Calculate avg(price * quantity)"},
-            ],
-            "issues": [
-                {"issue": "Missing product names", "suggestion": "Fill or remove rows with null product_name"},
-            ],
-        })
-
-        results = parse_llm_response(response, [sample_diagnosis], "gpt-4")
-
-        assert len(results) == 1
-        assert "/tmp/sales_data.csv" in results
-
-        result = results["/tmp/sales_data.csv"]
-        assert result.suggested_name == "sales_transactions"
-        assert "sales transaction" in result.context.lower()
-        assert len(result.potential) == 2
-        assert len(result.issues) == 1
-        assert result.model_used == "gpt-4"
-
-    def test_parse_multi_file_response(self, sample_diagnoses: List[FileDiagnosis]):
-        """Test parsing response for multiple files."""
-        response = json.dumps({
-            "files": [
-                {
-                    "file_path": "/tmp/sales_data.csv",
-                    "suggested_name": "sales",
-                    "context": "Sales data",
-                    "potential": [],
-                    "issues": [],
-                },
-                {
-                    "file_path": "/tmp/customer_data.csv",
-                    "suggested_name": "customers",
-                    "context": "Customer data",
-                    "potential": [],
-                    "issues": [],
-                },
-            ]
-        })
-
-        results = parse_llm_response(response, sample_diagnoses, "gpt-4")
-
-        assert len(results) == 2
-        assert results["/tmp/sales_data.csv"].suggested_name == "sales"
-        assert results["/tmp/customer_data.csv"].suggested_name == "customers"
-
-    def test_parse_response_with_markdown_code_block(self, sample_diagnosis: FileDiagnosis):
-        """Test parsing response wrapped in markdown code block."""
-        json_content = json.dumps({
-            "suggested_name": "test_dataset",
-            "context": "Test context",
-            "potential": [],
-            "issues": [],
-        })
-        response = f"```json\n{json_content}\n```"
-
-        results = parse_llm_response(response, [sample_diagnosis], "gpt-4")
-
-        assert len(results) == 1
-        assert results["/tmp/sales_data.csv"].suggested_name == "test_dataset"
-
-    def test_parse_invalid_json_returns_empty(self, sample_diagnosis: FileDiagnosis):
-        """Test that invalid JSON returns empty dict."""
-        response = "This is not valid JSON"
-
-        results = parse_llm_response(response, [sample_diagnosis], "gpt-4")
-
-        assert results == {}
-
-    def test_parse_response_with_missing_fields(self, sample_diagnosis: FileDiagnosis):
-        """Test parsing response with missing optional fields."""
-        response = json.dumps({
-            "suggested_name": "minimal_dataset",
-            "context": "Minimal context",
-        })
-
-        results = parse_llm_response(response, [sample_diagnosis], "gpt-4")
-
-        assert len(results) == 1
-        result = results["/tmp/sales_data.csv"]
-        assert result.suggested_name == "minimal_dataset"
-        assert result.potential == []
-        assert result.issues == []
-
-
 class TestAnalyzeBatchWithLLM:
     """Test analyze_batch_with_llm function."""
 
     @pytest.mark.asyncio
     async def test_analyze_batch_success(self, sample_diagnosis: FileDiagnosis):
         """Test successful batch analysis."""
-        mock_provider = AsyncMock()
-        mock_provider.ainvoke.return_value = json.dumps({
-            "suggested_name": "sales_data",
-            "context": "Sales transaction data",
-            "potential": [{"question": "Q1", "analysis": "A1"}],
-            "issues": [],
-        })
+        mock_llm_service = MagicMock(spec=LLMService)
+        mock_llm_service.model_name = "test-model"
+        mock_llm_service.complete_structured = AsyncMock(
+            return_value=BatchAnalysisSchema(
+                files=[
+                    FileAnalysisSchema(
+                        file_path="/tmp/sales_data.csv",
+                        suggested_name="sales_data",
+                        context="Sales transaction data",
+                        potential=[PotentialItemSchema(question="Q1", analysis="A1")],
+                        issues=[],
+                    )
+                ]
+            )
+        )
 
-        results = await analyze_batch_with_llm([sample_diagnosis], mock_provider, "test-model")
+        result = await analyze_batch_with_llm([sample_diagnosis], mock_llm_service)
 
-        assert len(results) == 1
-        assert "/tmp/sales_data.csv" in results
-        assert results["/tmp/sales_data.csv"].suggested_name == "sales_data"
-        mock_provider.ainvoke.assert_called_once()
+        assert len(result.file_results) == 1
+        assert "/tmp/sales_data.csv" in result.file_results
+        assert result.file_results["/tmp/sales_data.csv"].suggested_name == "sales_data"
+        mock_llm_service.complete_structured.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_analyze_empty_batch(self):
         """Test analyzing empty batch."""
-        mock_provider = AsyncMock()
+        mock_llm_service = MagicMock(spec=LLMService)
 
-        results = await analyze_batch_with_llm([], mock_provider, "test-model")
+        result = await analyze_batch_with_llm([], mock_llm_service)
 
-        assert results == {}
-        mock_provider.ainvoke.assert_not_called()
+        assert result.file_results == {}
+        mock_llm_service.complete_structured.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_analyze_batch_handles_llm_error(self, sample_diagnosis: FileDiagnosis):
         """Test that LLM errors are handled gracefully."""
-        mock_provider = AsyncMock()
-        mock_provider.ainvoke.side_effect = Exception("LLM API error")
+        mock_llm_service = MagicMock(spec=LLMService)
+        mock_llm_service.complete_structured = AsyncMock(side_effect=Exception("LLM API error"))
 
-        results = await analyze_batch_with_llm([sample_diagnosis], mock_provider, "test-model")
+        result = await analyze_batch_with_llm([sample_diagnosis], mock_llm_service)
 
-        assert results == {}
+        assert result.file_results == {}
 
 
 class TestAnalyzeDatasetsWithLLM:
@@ -289,48 +209,61 @@ class TestAnalyzeDatasetsWithLLM:
         # Create more diagnoses than batch size
         diagnoses = sample_diagnoses * 3  # 6 diagnoses
 
-        mock_provider = AsyncMock()
-        mock_provider._model = "test-model"
-        mock_provider.ainvoke.return_value = json.dumps({
-            "files": [
-                {"file_path": d.file_path, "suggested_name": "test", "context": "ctx", "potential": [], "issues": []}
-                for d in sample_diagnoses
-            ]
-        })
+        mock_llm_service = MagicMock(spec=LLMService)
+        mock_llm_service.model_name = "test-model"
+        mock_llm_service.complete_structured = AsyncMock(
+            return_value=BatchAnalysisSchema(
+                files=[
+                    FileAnalysisSchema(
+                        file_path=d.file_path,
+                        suggested_name="test",
+                        context="ctx",
+                        potential=[],
+                        issues=[],
+                    )
+                    for d in sample_diagnoses
+                ]
+            )
+        )
 
         # We can't easily test batching with gather, but we can verify the function works
-        results = await analyze_datasets_with_llm(diagnoses[:2], mock_provider)
+        result = await analyze_datasets_with_llm(diagnoses[:2], mock_llm_service)
 
         # Should have results for the diagnoses
-        assert len(results) >= 0  # May be empty due to mock behavior
+        assert isinstance(result, BatchLLMAnalysisResult)
 
     @pytest.mark.asyncio
     async def test_empty_input(self):
         """Test with empty input."""
-        results = await analyze_datasets_with_llm([])
+        result = await analyze_datasets_with_llm([])
 
-        assert results == {}
+        assert result.file_results == {}
 
     @pytest.mark.asyncio
-    async def test_with_mock_provider(self, sample_diagnosis: FileDiagnosis):
-        """Test full flow with mock provider."""
-        mock_provider = AsyncMock()
-        mock_provider._model = "mock-model"
-        mock_provider.ainvoke.return_value = json.dumps({
-            "suggested_name": "analyzed_data",
-            "context": "This is analyzed data",
-            "potential": [
-                {"question": "What trends exist?", "analysis": "Time series analysis"}
-            ],
-            "issues": [],
-        })
+    async def test_with_mock_service(self, sample_diagnosis: FileDiagnosis):
+        """Test full flow with mock LLM service."""
+        mock_llm_service = MagicMock(spec=LLMService)
+        mock_llm_service.model_name = "mock-model"
+        mock_llm_service.complete_structured = AsyncMock(
+            return_value=BatchAnalysisSchema(
+                files=[
+                    FileAnalysisSchema(
+                        file_path="/tmp/sales_data.csv",
+                        suggested_name="analyzed_data",
+                        context="This is analyzed data",
+                        potential=[PotentialItemSchema(question="What trends exist?", analysis="Time series analysis")],
+                        issues=[],
+                    )
+                ]
+            )
+        )
 
-        results = await analyze_datasets_with_llm([sample_diagnosis], mock_provider)
+        result = await analyze_datasets_with_llm([sample_diagnosis], mock_llm_service)
 
-        assert len(results) == 1
-        result = results["/tmp/sales_data.csv"]
-        assert result.suggested_name == "analyzed_data"
-        assert result.model_used == "mock-model"
+        assert len(result.file_results) == 1
+        file_result = result.file_results["/tmp/sales_data.csv"]
+        assert file_result.suggested_name == "analyzed_data"
+        assert file_result.model_used == "mock-model"
 
 
 class TestLLMBatchSize:
