@@ -420,9 +420,17 @@ export default function WorkspacePage() {
     void createBoard(newName);
   }, [boards, createBoard]);
 
-  const handleImportSuccess = useCallback(() => {
+  const handleImportSuccess = useCallback((newAsset?: FileAsset) => {
     // Trigger refresh of data sources list
     setDataSourcesRefresh(prev => prev + 1);
+
+    // If a new asset was created, auto-select it and navigate to datasets view
+    if (newAsset) {
+      setSelectedDataset(newAsset);
+      setMainView('datasets');
+      setSidebarTab('datasets');
+    }
+
     // Reload data sources for dropdown
     void (async () => {
       if (!defaultProjectId) return;
