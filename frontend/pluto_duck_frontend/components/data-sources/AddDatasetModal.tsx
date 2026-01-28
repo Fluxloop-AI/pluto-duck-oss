@@ -671,7 +671,7 @@ export function AddDatasetModal({
           file_path: firstFile.path,
           file_type: fileType,
           table_name: tableName,
-          name: firstFile.name,
+          name: tableName,
           overwrite: true,
           mode: 'replace',
         });
@@ -768,7 +768,7 @@ export function AddDatasetModal({
           file_path: file.path,
           file_type: fileType,
           table_name: tableName,
-          name: file.name,
+          name: tableName,
           overwrite: true,
         });
         successCount++;
